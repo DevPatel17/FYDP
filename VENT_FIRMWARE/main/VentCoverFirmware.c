@@ -18,14 +18,13 @@
 
 #include <stdio.h>
 
-// #include "protocol_examples_common.h"
 #include "esp_err.h"
 #include "esp_vfs_dev.h"
 #include "driver/uart.h"
 #include "sdkconfig.h"
 
 
-static const char *TAG = "example";
+static const char *TAG = "VentCover";
 
 // Please consult the datasheet of your servo before changing the following parameters
 #define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
@@ -37,11 +36,6 @@ static const char *TAG = "example";
 #define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
 #define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
 
-static inline uint32_t example_angle_to_compare(int angle)
-{
-    return (angle - SERVO_MIN_DEGREE) * (SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) / (SERVO_MAX_DEGREE - SERVO_MIN_DEGREE) + SERVO_MIN_PULSEWIDTH_US;
-}
-
 #define LED_PIN 2
 #define LEDC_TIMER LEDC_TIMER_0
 #define LEDC_MODE LEDC_HIGH_SPEED_MODE
@@ -50,7 +44,7 @@ static inline uint32_t example_angle_to_compare(int angle)
 #define LEDC_DUTY_RES LEDC_TIMER_12_BIT // 12-bit resolution
 #define LEDC_FREQUENCY 100 // Frequency in Hertz
 
-esp_err_t example_configure_stdin_stdout(void)
+esp_err_t configure_stdin_stdout(void)
 {
     static bool configured = false;
     if (configured) {
@@ -70,12 +64,9 @@ esp_err_t example_configure_stdin_stdout(void)
     return ESP_OK;
 }
 
-void app_main(void)
-{
-
+esp_err_t configure_motor_gpio() {
     // set up uart for stdin:
-    example_configure_stdin_stdout();
-
+    configure_stdin_stdout();
 
     // Configure the LEDC timer
     ledc_timer_config_t ledc_timer = {
@@ -101,42 +92,31 @@ void app_main(void)
 
     // Initialize fading service
     ledc_fade_func_install(0);
+    return ESP_OK;
+}
 
-    int prev_pre_duty = -2;
-    int prev_duty = -1;
+void set_motor_duty(int duty) {
+    if (duty < 0 || duty > 4095) {
+        printf("Invalid input. Please try again.\n");
+    }
+    else {
+        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
+        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+        ESP_LOGI(TAG, "DUTY: %d", duty);        
+    }
+}
+
+void app_main(void)
+{
+    configure_motor_gpio();
+
     int duty = 0;
     // min motor: 170 (0 DEG)
     // max motor; 1050 (360 DEG)
     while (1) {
-
         printf("Enter a number between 0 and 4095: ");
         scanf("%d", &duty);
-
-        if (duty < 0 || duty > 4095) {
-            printf("Invalid input. Please try again.\n");
-            // vTaskDelay(pdMS_TO_TICKS(5000));
-        }
-
-        else {
-            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
-            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
-            ESP_LOGI(TAG, "DUTY: %d", duty);
-            // vTaskDelay(pdMS_TO_TICKtS(5000));           
-        }
-        // Gradually increase the brightness
-        // for (int duty = 1700; duty <= 4060; duty+=100) {
-        //     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
-        //     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
-        //     ESP_LOGI(TAG, "DUTY: %d", duty);
-        //     vTaskDelay(pdMS_TO_TICKS(100));
-        // }
-        // // Gradually decrease the brightness
-        // for (int duty = 4060; duty >= 1700; duty-=100) {
-        //     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
-        //     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
-        //     ESP_LOGI(TAG, "DUTY: %d", duty);
-        //     vTaskDelay(pdMS_TO_TICKS(100));
-        // }
+        set_motor_duty(duty);
 
     }
 }
