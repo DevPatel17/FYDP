@@ -1,0 +1,32 @@
+# Compiled object files, libraries, and executables
+*.o
+*.a
+*.out
+*.elf
+*.bin
+
+# Build directories
+*/build/*
+*.log
+*/bootloader/
+*/build/
+*/partition_table/
+*/sdkconfig
+*/sdkconfig.old
+
+# IDF specific files
+*.d
+*.map
+*.tmp
+*.bin
+*.hex
+*.core
+
+# Debugging files
+*.swo
+*.jlink
+*.jtag
+*.ld
+
+# MAC specicic files
+.DS_Store
