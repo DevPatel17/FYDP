@@ -7,6 +7,7 @@
 
 # Build directories
 */build/*
+VENT_FIRMWARE/main/build/*
 *.log
 */bootloader/
 */build/
