@@ -14,7 +14,7 @@
 #include "sdkconfig.h"
 #include "esp_console.h"
 
-static const char *TAG = "Motor";
+static const char *MOTOR_TAG = "Motor";
 
 
 // Please consult the datasheet of your servo before changing the following parameters
@@ -76,7 +76,7 @@ void set_motor_duty(int duty)
     } else {
         ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
         ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
-        ESP_LOGI(TAG, "DUTY: %d", duty);
+        ESP_LOGI(MOTOR_TAG, "DUTY: %d", duty);
     }
 }
 
