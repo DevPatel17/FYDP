@@ -16,6 +16,7 @@
 #define DEVICE_NAME "BLE-Client"
 #define WRITE_CHAR_UUID 0xDEAD
 #define DISCOVERY_RETRY_DELAY_MS 1000  // Delay before retrying discovery
+#define MESSAGE_INTERVAL_MS 1000       // Interval between messages in milliseconds
 
 char *TAG = "BLE Client";
 
@@ -25,6 +26,7 @@ static uint16_t char_handle = 0;
 
 void ble_app_scan(void);
 int write_to_characteristic(uint16_t conn_handle, uint16_t char_handle, const uint8_t *data, size_t length);
+void report_telemetry_task(void *pvParameters);
 
 static int on_characteristic_discovered(uint16_t conn_handle, const struct ble_gatt_error *error, const struct ble_gatt_chr *chr, void *arg) {
     if (error->status != 0) {
@@ -45,14 +47,8 @@ static int on_characteristic_discovered(uint16_t conn_handle, const struct ble_g
         ESP_LOGI(TAG, "Write characteristic discovered");
         char_handle = chr->val_handle;
 
-        // Send "hello, world!" message
-        const char *msg = "hello, world!";
-        int rc = ble_gattc_write_flat(conn_handle, char_handle, msg, strlen(msg), NULL, NULL);
-        if (rc != 0) {
-            ESP_LOGE(TAG, "Error writing to characteristic: %d", rc);
-        } else {
-            ESP_LOGI(TAG, "Write request sent successfully");
-        }
+        // Start the periodic send task
+        xTaskCreate(report_telemetry_task, "report_telemetry_task", 2048, NULL, 5, NULL);
     }
 
     return 0;
@@ -101,21 +97,17 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
         // NimBLE event discovery
         case BLE_GAP_EVENT_DISC:
             ble_hs_adv_parse_fields(&fields, event->disc.data, event->disc.length_data);
-            if (fields.name_len > 0)
-            {
+            if (fields.name_len > 0) {
                 printf("Name: %.*s\n", fields.name_len, fields.name);
             
-            if (strstr((const char *)event->disc.data, "BLE-Server"))
-            {
-                // Stop scanning before attempting to connect
-                ble_gap_disc_cancel();
+                if (strstr((const char *)event->disc.data, "BLE-Server")) {
+                    // Stop scanning before attempting to connect
+                    ble_gap_disc_cancel();
 
-                ESP_LOGI(TAG, "Target device found, initiating connection");
-                // print_ble_address(&event->disc.addr);
-                int ret = ble_gap_connect(own_addr_type, &event->disc.addr, INT32_MAX, NULL, ble_gap_event, NULL);
-                printf("Connection ret int: %i \n", ret);
-
-            }
+                    ESP_LOGI(TAG, "Target device found, initiating connection");
+                    int ret = ble_gap_connect(own_addr_type, &event->disc.addr, INT32_MAX, NULL, ble_gap_event, NULL);
+                    printf("Connection ret int: %i \n", ret);
+                }
             }
             return 0;
             break;
@@ -154,7 +146,6 @@ void app_main(void) {
     ble_svc_gap_device_name_set(DEVICE_NAME);
     ble_svc_gap_init();
     ble_svc_gatt_init();
-    printf("NEW CODE: \n");
     ble_hs_cfg.sync_cb = ble_app_on_sync;
     nimble_port_freertos_init(host_task);
 }
@@ -167,4 +158,21 @@ int write_to_characteristic(uint16_t conn_handle, uint16_t char_handle, const ui
         ESP_LOGI(TAG, "Write request sent successfully");
     }
     return status;
+}
+
+
+
+void report_telemetry_task(void *pvParameters) {
+    const char *msg = "hello, world!";
+    while (1) {
+        if (char_handle != 0) {
+            int rc = write_to_characteristic(conn_handle, char_handle, (const uint8_t *)msg, strlen(msg));
+            if (rc != 0) {
+                ESP_LOGE(TAG, "Error writing to characteristic: %d", rc);
+            } else {
+                ESP_LOGI(TAG, "Message sent: %s", msg);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(MESSAGE_INTERVAL_MS));
+    }
 }
