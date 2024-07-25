@@ -28,7 +28,6 @@ class Vent{
         bool user_forced;
         // Default constructor
         Vent() : ID(0), temperature(0.0f), desired_temperature(23.0f), cover(0), user_forced(false) {
-        // Optionally, you can initialize each member explicitly in the constructor initializer list
     }
 };
 
@@ -36,6 +35,7 @@ class Packet{
     public:
         int pkt_type;
         float temperature;
+        int motor_pos;
 };
 
 int server_fd, new_socket, valread;
@@ -45,6 +45,7 @@ int addrlen = sizeof(address);
 vector<int> client_sockets;
 pthread_t vent_recv_threads[10];
 Vent vent_arr[10];
+void *args[10];
 
 double Kp = 1.5;  // Proportional gain
 double Ki = 0.5; // Integral gain
@@ -117,7 +118,6 @@ void* recv_packets(void *args){
                 cout << "Packet parsing error" << endl;
                 continue;
             }
-
             cout << "pkt type: " << (int)data.pkt_type << endl;
             if(data.pkt_type != DATA_PACKET){
                 cout << "Not a data packet" << endl;
@@ -130,11 +130,14 @@ void* recv_packets(void *args){
             
             int new_cover = update_cover(data.temperature, DESIRED_TEMP);
 
-            if(new_cover != vent_arr[vent_num].cover)
+            if(new_cover != vent_arr[vent_num].cover){
+                //send packet back
                 vent_arr[vent_num].cover = new_cover;
-
-            //send packet back
-
+                Packet command;
+                command.pkt_type = 0x2;
+                command.motor_pos = new_cover;
+                cout << "Send: " << send(sockfd, &command, sizeof(command), 0) << "Motor position: " << command.motor_pos << endl;
+            }
         }
     }
     return NULL;
@@ -143,7 +146,6 @@ void* recv_packets(void *args){
 void* connection_setup(void *args){
     while(1){
         //check for setup connections
-        //This is a blocking call
         cout << "Waiting for new connection..." << endl;
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
             perror("accept");
@@ -211,12 +213,10 @@ int main(void){
     cout << "create setup thread " << endl;
     pthread_create(&setup_thread, NULL, connection_setup, NULL);
 
+    //TODO: Create signal handler for cleanup
 
     //Cleanup
     pthread_join(setup_thread, NULL);
-    // pthread_join(consumer_thread, NULL);
-
-    //collect all recv threads
 
     return 0;
 }
