@@ -4,9 +4,19 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <random>
+
 
 #define PORT 8080
 using namespace std;
+
+// Function to generate a random float between min and max (inclusive)
+float randomFloat(float min, float max) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dis(min, max);
+    return dis(gen);
+}
 
 class Packet{
     public:
@@ -23,7 +33,6 @@ int main(int argc, char const *argv[]) {
     Packet data;
     data.pkt_type = 1;
     data.temperature = 22.0;
-    cout << "Send: " << send(sock, &data, sizeof(data), 0) << endl;
     
 
     char buffer[1024] = {0};
@@ -47,8 +56,14 @@ int main(int argc, char const *argv[]) {
         return -1;
     }
 
-    
-    // valread = read(sock, buffer, 1024);
-    // printf("%s\n", buffer);
+    for(int i = 0; i < 25; i++){
+        data.temperature = randomFloat(20.0, 25.0);
+        
+        cout << "Send: " << send(sock, &data, sizeof(data), 0) << endl;
+        
+        valread = read(sock, buffer, 1024);
+        
+        cout << "Recv: " << valread << endl;
+    }
     return 0;
 }
