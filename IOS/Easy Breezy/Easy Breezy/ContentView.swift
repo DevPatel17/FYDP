@@ -4,10 +4,21 @@ import Network
 struct ContentView: View {
     @State private var motorPosition: String = ""
     @State private var temperature: String = ""
+    @State private var receivedPktType: String = ""
+    @State private var receivedTemperature: String = ""
 
     var body: some View {
         VStack{
             Text("Easy Breezy Test Prototype").font(/*@START_MENU_TOKEN@*/.title/*@END_MENU_TOKEN@*/).monospaced()
+            Text("Received Packet:")
+                .font(.headline)
+                .padding(.top)
+            
+            Text("Packet Type: \(receivedPktType)")
+                .padding(.top)
+            
+            Text("Temperature: \(receivedTemperature)")
+                .padding(.top)
             HStack {
                 VStack{
                     TextField("Motor Position", text: $motorPosition)
@@ -42,7 +53,8 @@ struct ContentView: View {
                     }
                 }
             }
-        }
+        }.padding().onAppear {
+startListening()}
             
             
     }
@@ -77,7 +89,46 @@ struct ContentView: View {
             }
         }))
     }
+    
+    func startListening() {
+        let listener = try! NWListener(using: .udp, on: 3001)
+        
+        listener.newConnectionHandler = { newConnection in
+            newConnection.start(queue: .main)
+            self.receive(on: newConnection)
+        }
+        
+        listener.start(queue: .main)
+    }
+    
+    func receive(on connection: NWConnection) {
+        connection.receiveMessage { (data, context, isComplete, error) in
+            if let data = data, !data.isEmpty {
+                var pktType: UInt32 = 0
+                var temperatureBitPattern: UInt32 = 0
+
+                data.withUnsafeBytes { buffer in
+                    let rawBytes = buffer.bindMemory(to: UInt8.self)
+                    memcpy(&pktType, rawBytes.baseAddress!, MemoryLayout<UInt32>.size)
+                    memcpy(&temperatureBitPattern, rawBytes.baseAddress! + MemoryLayout<UInt32>.size, MemoryLayout<UInt32>.size)
+                }
+
+                let pktTypeHost = UInt32(littleEndian: pktType)
+                let temperature = Float(bitPattern: temperatureBitPattern)
+
+                self.receivedPktType = String(pktTypeHost)
+                self.receivedTemperature = String(temperature)
+
+                print("Received Packet Type: \(pktTypeHost), Temperature: \(temperature)")
+            }
+
+            self.receive(on: connection)
+        }
+    }
 }
+
+    
+
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
