@@ -2,19 +2,17 @@
         import Network
         import CoreBluetooth
 
+extension Notification.Name {
+    static let ventSetupComplete = Notification.Name("ventSetupComplete")
+}
+
         struct ContentView: View {
-            @State private var vents: [Vent] = [
-                Vent(id: 0, room: "Living Room", temperature: "22.0", targetTemp: "22.0", isOpen: false),
-                Vent(id: 1, room: "Bedroom", temperature: "23.5", targetTemp: "23.0", isOpen: true),
-                Vent(id: 2, room: "Kitchen", temperature: "21.0", targetTemp: "21.0", isOpen: false),
-                Vent(id: 3, room: "Office", temperature: "24.0", targetTemp: "23.0", isOpen: true),
-                Vent(id: 4, room: "Bathroom", temperature: "22.5", targetTemp: "22.0", isOpen: false),
-                Vent(id: 5, room: "Guest Room", temperature: "21.5", targetTemp: "21.0", isOpen: false)
-            ]
-            @State private var selectedVent: Vent? = nil
-            @State private var receivedPktType: String = ""
-            @State private var receivedTemperature: String = ""
-            @State private var showingSettings = false
+            @State private var vents: [Vent] = []  // Start with empty array
+               @State private var selectedVent: Vent? = nil
+               @State private var receivedPktType: String = ""
+               @State private var receivedTemperature: String = ""
+               @State private var showingSettings = false
+               @State private var showingAddVent = false
             
             
             func sendPacket(pktType: Int, value: Float) {
@@ -59,36 +57,52 @@
             }
             
             private var mainView: some View {
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            headerView
-                            buildingStatusView
+                ScrollView {
+                    VStack(spacing: 20) {
+                        headerView
+                        buildingStatusView
+                        
+                        LazyVGrid(columns: [
+                            GridItem(.flexible()),
+                            GridItem(.flexible())
+                        ], spacing: 16) {
+                            ForEach($vents) { $vent in
+                                VentCard(
+                                    vent: $vent,
+                                    onTap: { selectedVent = vent },
+                                    onToggle: {
+                                        vent.isOpen.toggle()
+                                        sendPacket(
+                                            pktType: Int(UInt32(vent.id)),
+                                            value: vent.isOpen ? 1.0 : 0.0
+                                        )
+                                    }
+                                )
+                            }
                             
-                            LazyVGrid(columns: [
-                                GridItem(.flexible()),
-                                GridItem(.flexible())
-                            ], spacing: 16) {
-                                ForEach($vents) { $vent in
-                                    VentCard(
-                                        vent: $vent,
-                                        onTap: { selectedVent = vent },
-                                        onToggle: {
-                                            vent.isOpen.toggle()
-                                            // Use Bluetooth to send packet
-                                            sendPacket(
-                                                pktType: Int(UInt32(vent.id)),
-                                                value: vent.isOpen ? 1.0 : 0.0
-                                            )
-                                        }
-                                    )
+                            // Add Vent Button
+                            Button(action: { showingAddVent = true }) {
+                                VStack {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 40))
+                                    Text("Add Vent")
+                                        .font(.headline)
                                 }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 160)
+                                .background(Color.white.opacity(0.1))
+                                .cornerRadius(16)
                             }
                         }
-                        .padding()
                     }
-                    .background(Color(hex: "1C1C1E"))
+                    .padding()
                 }
-
+                .background(Color(hex: "1C1C1E"))
+                .sheet(isPresented: $showingAddVent) {
+                    AddVentView(vents: $vents, onSendPacket: sendPacket)
+                }
+            }
             
             private var headerView: some View {
                 HStack {
@@ -166,34 +180,49 @@
             }
 
             func receive(on connection: NWConnection) {
-                connection.receiveMessage { (data, context, isComplete, error) in
-                    if let data = data, !data.isEmpty {
-                        var pktType: UInt32 = 0
-                        var temperatureBitPattern: UInt32 = 0
-
-                        data.withUnsafeBytes { buffer in
-                            let rawBytes = buffer.bindMemory(to: UInt8.self)
-                            memcpy(&pktType, rawBytes.baseAddress!, MemoryLayout<UInt32>.size)
-                            memcpy(&temperatureBitPattern, rawBytes.baseAddress! + MemoryLayout<UInt32>.size, MemoryLayout<UInt32>.size)
+                    print("Starting receive function...")
+                    connection.receiveMessage { (data, context, isComplete, error) in
+                        if let error = error {
+                            print("❌ Receive error: \(error.localizedDescription)")
+                            return
                         }
-
-                        let pktTypeHost = UInt32(littleEndian: pktType)
-                        let temperature = Float(bitPattern: temperatureBitPattern)
-
-                        // Update the UI
-                        DispatchQueue.main.async {
-                            self.receivedPktType = String(pktTypeHost)
-                            self.receivedTemperature = String(format: "%.1f°", temperature)
+                        
+                        print("Message received - isComplete: \(isComplete)")
+                        print("Data received: \(data?.count ?? 0) bytes")
+                        if let data = data, !data.isEmpty {
+                            var pktType: UInt32 = 0
+                            var valueBitPattern: UInt32 = 0
                             
-                            // Update the corresponding vent's temperature
-                            if let ventIndex = self.vents.firstIndex(where: { $0.id == Int(pktTypeHost) }) {
-                                self.vents[ventIndex].temperature = String(format:  "%.1f", temperature)
+                            data.withUnsafeBytes { buffer in
+                                let rawBytes = buffer.bindMemory(to: UInt8.self)
+                                memcpy(&pktType, rawBytes.baseAddress!, MemoryLayout<UInt32>.size)
+                                memcpy(&valueBitPattern, rawBytes.baseAddress! + MemoryLayout<UInt32>.size, MemoryLayout<UInt32>.size)
+                            }
+                            
+                            let pktTypeHost = UInt32(littleEndian: pktType)
+                            let value = Float(bitPattern: valueBitPattern)
+                            
+                            print("📦 Decoded packet - Type: \(pktTypeHost), Value: \(value)")
+                            
+                            // Update the UI
+                            DispatchQueue.main.async {
+                                self.receivedPktType = String(pktTypeHost)
+                                self.receivedTemperature = String(format: "%.1f°", value)
+                                
+                                if pktTypeHost == 8 {
+                                    // Setup success received
+                                    NotificationCenter.default.post(name: .ventSetupComplete, object: nil)
+                                } else if pktTypeHost <= 5 {
+                                    // Update the corresponding vent's temperature
+                                    if let ventIndex = self.vents.firstIndex(where: { $0.id == Int(pktTypeHost) }) {
+                                        self.vents[ventIndex].temperature = String(format: "%.1f", value)
+                                    }
+                                }
                             }
                         }
+                        self.receive(on: connection)
                     }
-                    self.receive(on: connection)
                 }
-            }
         }
 
         // MARK: - Models
@@ -590,7 +619,135 @@
                 )
             }
         }
-
+struct AddVentView: View {
+    @Environment(\.dismiss) var dismiss
+    @Binding var vents: [Vent]
+    let onSendPacket: (Int, Float) -> Void
+    
+    @State private var ventName: String = ""
+    @State private var setupStage: SetupStage = .initial
+    @State private var setupError: String? = nil
+    
+    // Add observer for setup completion
+    init(vents: Binding<[Vent]>, onSendPacket: @escaping (Int, Float) -> Void) {
+        self._vents = vents
+        self.onSendPacket = onSendPacket
+        
+        // Remove any existing observers to avoid duplicates
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    enum SetupStage {
+        case initial
+        case searching
+        case naming
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                switch setupStage {
+                case .initial:
+                    VStack(spacing: 16) {
+                        Image(systemName: "fan.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.white)
+                        
+                        Text("Add New Vent")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Make sure your new vent is powered on and nearby")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        
+                        Button(action: startSetup) {
+                            Text("Start Setup")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color(hex: "86B5A5"))
+                                .cornerRadius(12)
+                        }
+                        .padding(.top)
+                    }
+                    
+                case .searching:
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .padding()
+                        
+                        Text("Searching for new vent...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        if let error = setupError {
+                            Text(error)
+                                .font(.subheadline)
+                                .foregroundColor(.red)
+                                .padding()
+                        }
+                    }
+                    
+                case .naming:
+                    VStack(spacing: 16) {
+                        Text("New Vent Found!")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        TextField("Enter vent name", text: $ventName)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .padding()
+                        
+                        Button(action: completeSetup) {
+                            Text("Complete Setup")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color(hex: "86B5A5"))
+                                .cornerRadius(12)
+                        }
+                        .disabled(ventName.isEmpty)
+                    }
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(hex: "1C1C1E"))
+            .navigationBarItems(trailing: Button("Cancel") {
+                dismiss()
+            })
+            .onReceive(NotificationCenter.default.publisher(for: .ventSetupComplete)) { _ in
+                print("Received setup complete notification")
+                setupStage = .naming
+            }
+        }
+    }
+    
+    private func startSetup() {
+        setupStage = .searching
+        setupError = nil
+        onSendPacket(7, 1.0)  // Send setup request packet
+    }
+    
+    private func completeSetup() {
+        let newVent = Vent(
+            id: vents.count,  // Use count as new ID
+            room: ventName,
+            temperature: "20.0",
+            targetTemp: "20.0",
+            isOpen: false
+        )
+        vents.append(newVent)
+        dismiss()
+    }
+}
 
         struct ContentView_Previews: PreviewProvider {
             static var previews: some View {
