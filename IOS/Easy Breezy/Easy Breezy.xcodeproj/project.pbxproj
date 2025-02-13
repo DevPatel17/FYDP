@@ -11,15 +11,18 @@
 		E3C730612C4771C200887D88 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3C730602C4771C200887D88 /* ContentView.swift */; };
 		E3C730632C4771C300887D88 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E3C730622C4771C300887D88 /* Assets.xcassets */; };
 		E3C730672C4771C300887D88 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E3C730662C4771C300887D88 /* Preview Assets.xcassets */; };
+		E3C8A56E2C520D7E003014C8 /* LITE4X10BLK.webp in Resources */ = {isa = PBXBuildFile; fileRef = E3C8A56D2C520D7D003014C8 /* LITE4X10BLK.webp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		E35CD9242D5D804D0099D410 /* Easy-Breezy-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "Easy-Breezy-Info.plist"; sourceTree = SOURCE_ROOT; };
 		E3C7305B2C4771C200887D88 /* Easy Breezy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Easy Breezy.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E3C7305E2C4771C200887D88 /* Easy_BreezyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Easy_BreezyApp.swift; sourceTree = "<group>"; };
 		E3C730602C4771C200887D88 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		E3C730622C4771C300887D88 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E3C730642C4771C300887D88 /* Easy_Breezy.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Easy_Breezy.entitlements; sourceTree = "<group>"; };
 		E3C730662C4771C300887D88 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		E3C8A56D2C520D7D003014C8 /* LITE4X10BLK.webp */ = {isa = PBXFileReference; lastKnownFileType = file; path = LITE4X10BLK.webp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,7 +55,9 @@
 		E3C7305D2C4771C200887D88 /* Easy Breezy */ = {
 			isa = PBXGroup;
 			children = (
+				E35CD9242D5D804D0099D410 /* Easy-Breezy-Info.plist */,
 				E3C7305E2C4771C200887D88 /* Easy_BreezyApp.swift */,
+				E3C8A56D2C520D7D003014C8 /* LITE4X10BLK.webp */,
 				E3C730602C4771C200887D88 /* ContentView.swift */,
 				E3C730622C4771C300887D88 /* Assets.xcassets */,
 				E3C730642C4771C300887D88 /* Easy_Breezy.entitlements */,
@@ -129,6 +134,7 @@
 			files = (
 				E3C730672C4771C300887D88 /* Preview Assets.xcassets in Resources */,
 				E3C730632C4771C300887D88 /* Assets.xcassets in Resources */,
+				E3C8A56E2C520D7E003014C8 /* LITE4X10BLK.webp in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -267,11 +273,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Easy Breezy/Easy_Breezy.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Easy Breezy/Preview Content\"";
+				DEVELOPMENT_TEAM = GKJN8B3M35;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Easy-Breezy-Info.plist";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -287,8 +298,9 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.5;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.ohm.Easy-Breezy";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ohm.easybreezy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -303,11 +315,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Easy Breezy/Easy_Breezy.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Easy Breezy/Preview Content\"";
+				DEVELOPMENT_TEAM = GKJN8B3M35;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Easy-Breezy-Info.plist";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -323,8 +340,9 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.5;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.ohm.Easy-Breezy";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ohm.easybreezy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = YES;
