@@ -13,7 +13,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "sdkconfig.h"
 
-char *BLE_TAG = "BLE-Server";
+char *BLE_TAG = "BLE_SERVER";
 uint8_t ble_addr_type;
 void ble_app_advertise(void);
 
@@ -107,7 +107,8 @@ void host_task(void *param)
 void ble_server_task_entry()
 {
 
-    printf("New server code:\n");
+    ESP_LOGI(BLE_TAG, "BLE server task started.");
+
     nvs_flash_init();                          // 1 - Initialize NVS flash using
     esp_nimble_hci_init();                     // 2 - Initialize ESP controller
     nimble_port_init();                        // 3 - Initialize the host stack
