@@ -37,39 +37,37 @@ async def find_device():
         await asyncio.sleep(1)
 
 async def connect_to_ble_client(VentID, phone_connection):
-    """Main function to handle BLE connection and communication"""
     try:
-        # Find the device
         device = await find_device()
         
-        # Connect to the device
-        client = BleakClient(device.address)
-        await client.connect()
-        logger.info(f"Connected to {device.name}")
+        # Define notification callback
+        def notification_handler(sender, data):
+            logger.info(f"Received notification: {data.decode()}")
+            if data.decode() == "Accepted":
+                phone_connection.send_packet(1, VentID) # Send success packet containing the VentID to the iPhone
+            
+        async with BleakClient(device.address) as client:
+            logger.info(f"Connected to {device.name}")
 
-        # Read data
-        value = await client.read_gatt_char(READ_CHAR_UUID)
-        logger.info(f"Read value: {value.decode()}")
+            # Enable notifications for the characteristic
+            await client.start_notify(READ_CHAR_UUID, notification_handler)
+            logger.info("Notifications enabled")
 
-        # Write data
-        message = f"Connected, Vent ID: {VentID}".encode()
-        await client.write_gatt_char(WRITE_UUID, message)
-        logger.info(f"Sent message: {message.decode()}")
+            # Write data
+            message = f"Connected, Vent ID: {VentID}".encode()
+            await client.write_gatt_char(WRITE_UUID, message)
+            logger.info(f"Sent message: {message.decode()}")
+            
+            # Wait for notification in a loop
+            # while True:
+            #     await asyncio.sleep(1)
+            # phone_connection.send_packet(1, VentID)  # Send success packet containing the VentID to the iPhone
+
+            return client   
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
         
-        # Send VentID to vent until it sends an accepted message
-        # TODO: Currently unable to parse incoming message, only works with device_read() from ESP32
-        # while True:
-        value = await client.read_gatt_char(READ_CHAR_UUID)
-        logger.info(f"Read value: {value.decode()}")
-            # if value.decode() == "Accepted":
-            #     break
-            # else:
-            #     await client.write_gatt_char(WRITE_UUID, message)
-            #     logger.info(f"Sent message: {message.decode()}")
         
-        phone_connection.send_packet(1, VentID)  # Send success packet containing the VentID to the iPhone
-        
-        return client
 
     except Exception as e:
         logger.error(f"Error: {str(e)}")
@@ -193,7 +191,7 @@ class VentCommunicator:
         # """Listen for incoming packets from the phone"""
         while self.running:
             try:
-                print('\nWaiting for packet...')
+                # print('\nWaiting for packet...')
                 data, address = self.recv_socket.recvfrom(1024)
                 
                 # Store the phone's address for sending responses
@@ -218,7 +216,6 @@ class VentCommunicator:
                         # TODO: Put this in a new thread
                         # Look for ESP32, send it it's associated VentID, wait for accepted message, send iPhone messaged that setup was completed
                         try:
-                            # Possibly make this async
                             VentConnection = asyncio.run(connect_to_ble_client(VentID, self))
                             # Store BLE connection
                             vent_system.get_vent_cover(VentID).set_ble_connection(VentConnection)

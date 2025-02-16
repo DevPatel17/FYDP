@@ -13,7 +13,7 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "sdkconfig.h"
 
-char *BLE_TAG = "BLE-Server";
+char *BLE_TAG = "BLE_SERVER";
 uint8_t ble_addr_type;
 void ble_app_advertise(void);
 uint16_t your_read_attr_handle = 0;
@@ -42,10 +42,15 @@ static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_g
             
             // Send response using notification
             // TODO: Unable to read message content at the Pi at the moment
-            struct os_mbuf *om = ble_hs_mbuf_from_flat("Accepted", strlen("Accepted"));
-            ble_gattc_notify_custom(conn_handle, your_read_attr_handle, om);
-            printf("Sent\n");
-        }
+             // Send "Accepted" message back to the client
+            const char *response = "Accepted";
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(response, strlen(response));
+            if (om == NULL) {
+                printf("Failed to allocate buffer for notification\n");
+            }
+            int rc = ble_gatts_notify_custom(conn_handle, your_read_attr_handle, om);
+                printf("Sending notification: %s (result: %d)\n", response, rc);
+            }
     }
     return 0;
 }
@@ -65,7 +70,8 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
      .uuid = BLE_UUID16_DECLARE(0x180),                 // Define UUID for device type
      .characteristics = (struct ble_gatt_chr_def[]){
          {.uuid = BLE_UUID16_DECLARE(0xFEF4),           // Define UUID for reading
-          .flags = BLE_GATT_CHR_F_READ,
+          .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE,  // Add INDICATE flag
+          .val_handle = &your_read_attr_handle,  // Store handle here
           .access_cb = device_read},
          {.uuid = BLE_UUID16_DECLARE(0xDEAD),           // Define UUID for writing
           .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
@@ -73,11 +79,25 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
          {0}}},
     {0}};
 
+
+static int ble_svc_gatt_handler(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    printf("GATT event, op: %d\n", ctxt->op);
+    return 0;
+}
+
 // BLE event handling
 static int ble_gap_event(struct ble_gap_event *event, void *arg)
 {
     switch (event->type)
     {
+    case BLE_GAP_EVENT_SUBSCRIBE:
+        printf("Subscribe event. Cur_notify=%d\n", event->subscribe.cur_notify);
+        // Handle subscription change
+        if (event->subscribe.attr_handle == your_read_attr_handle) {
+            printf("Notifications %s\n", event->subscribe.cur_notify ? "enabled" : "disabled");
+        }
+        break;
     // Advertise if connected
     case BLE_GAP_EVENT_CONNECT:
         ESP_LOGI("GAP", "BLE GAP EVENT CONNECT %s", event->connect.status == 0 ? "OK!" : "FAILED!");
@@ -134,7 +154,8 @@ void host_task(void *param)
 void ble_server_task_entry()
 {
 
-    printf("New server code:\n");
+    ESP_LOGI(BLE_TAG, "BLE server task started.");
+
     nvs_flash_init();                          // 1 - Initialize NVS flash using
     esp_nimble_hci_init();                     // 2 - Initialize ESP controller
     nimble_port_init();                        // 3 - Initialize the host stack
