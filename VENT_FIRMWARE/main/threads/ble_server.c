@@ -16,18 +16,45 @@
 char *BLE_TAG = "BLE-Server";
 uint8_t ble_addr_type;
 void ble_app_advertise(void);
+uint16_t your_read_attr_handle = 0;
+int VentID = 0;
 
 // Write data to ESP32 defined as server
 static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    printf("Data from the client: %.*s\n", ctxt->om->om_len, ctxt->om->om_data);
+    // Create a null-terminated string from the received data
+    char received_str[ctxt->om->om_len + 1];
+    memcpy(received_str, ctxt->om->om_data, ctxt->om->om_len);
+    received_str[ctxt->om->om_len] = '\0';
+    
+    printf("Data from the client: %s\n", received_str);
+
+    // Check if the message starts with "Connected, Vent ID: "
+    const char* prefix = "Connected, Vent ID: ";
+    if (strncmp(received_str, prefix, strlen(prefix)) == 0) {
+        // Extract the ventID number, VentID is a global
+        /* All packets sent going forward will be prefixed with VentID to tell the Central Hub which vent the
+            packet is coming from
+        */
+        
+        if (sscanf(received_str + strlen(prefix), "%d", &VentID) == 1) {
+            printf("Extracted Vent ID: %d\n", VentID);
+            
+            // Send response using notification
+            // TODO: Unable to read message content at the Pi at the moment
+            struct os_mbuf *om = ble_hs_mbuf_from_flat("Accepted", strlen("Accepted"));
+            ble_gattc_notify_custom(conn_handle, your_read_attr_handle, om);
+            printf("Sent\n");
+        }
+    }
     return 0;
 }
 
 // Read data from ESP32 defined as server
 static int device_read(uint16_t con_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    os_mbuf_append(ctxt->om, "Data from the server", strlen("Data from the server"));
+    your_read_attr_handle = attr_handle;  // Store the handle
+    // os_mbuf_append(ctxt->om, "Data from the server", strlen("Data from the server"));
     return 0;
 }
 

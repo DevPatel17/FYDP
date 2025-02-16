@@ -17,7 +17,7 @@ extension Notification.Name {
             
             func sendPacket(pktType: Int, value: Float) {
                 let connection = NWConnection(
-                    host: "10.31.94.136",
+                    host: "192.168.4.195",
                     port: 5000,
                     using: .udp
                 )
@@ -209,9 +209,15 @@ extension Notification.Name {
                                 self.receivedPktType = String(pktTypeHost)
                                 self.receivedTemperature = String(format: "%.1f°", value)
                                 
-                                if pktTypeHost == 8 {
-                                    // Setup success received
-                                    NotificationCenter.default.post(name: .ventSetupComplete, object: nil)
+                                if pktTypeHost == 1 {
+                                    // Store the value as ventID
+                                    let ventID = Int(value)  // Convert float value to integer
+                                    // Setup success received with ventID
+                                    NotificationCenter.default.post(
+                                        name: .ventSetupComplete,
+                                        object: nil,
+                                        userInfo: ["ventID": ventID]  // Pass the ventID in the notification
+                                    )
                                 } else if pktTypeHost <= 5 {
                                     // Update the corresponding vent's temperature
                                     if let ventIndex = self.vents.firstIndex(where: { $0.id == Int(pktTypeHost) }) {
@@ -627,6 +633,7 @@ struct AddVentView: View {
     @State private var ventName: String = ""
     @State private var setupStage: SetupStage = .initial
     @State private var setupError: String? = nil
+    @State private var receivedVentID: Int?
     
     // Add observer for setup completion
     init(vents: Binding<[Vent]>, onSendPacket: @escaping (Int, Float) -> Void) {
@@ -723,8 +730,11 @@ struct AddVentView: View {
             .navigationBarItems(trailing: Button("Cancel") {
                 dismiss()
             })
-            .onReceive(NotificationCenter.default.publisher(for: .ventSetupComplete)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .ventSetupComplete)) { notification in
                 print("Received setup complete notification")
+                if let ventID = notification.userInfo?["ventID"] as? Int {
+                    self.receivedVentID = ventID
+                }
                 setupStage = .naming
             }
         }
@@ -733,12 +743,12 @@ struct AddVentView: View {
     private func startSetup() {
         setupStage = .searching
         setupError = nil
-        onSendPacket(7, 1.0)  // Send setup request packet
+        onSendPacket(1, 0.0)  // Changed from (7, 1.0) to (1, 0.0)
     }
     
     private func completeSetup() {
         let newVent = Vent(
-            id: vents.count,  // Use count as new ID
+            id: receivedVentID ?? vents.count,  // Use received ventID if available
             room: ventName,
             temperature: "20.0",
             targetTemp: "20.0",
