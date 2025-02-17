@@ -191,37 +191,57 @@ extension Notification.Name {
                         print("Data received: \(data?.count ?? 0) bytes")
                         if let data = data, !data.isEmpty {
                             var pktType: UInt32 = 0
-                            var valueBitPattern: UInt32 = 0
+                            let stringData: Data
                             
+                            // Get the packet type
                             data.withUnsafeBytes { buffer in
                                 let rawBytes = buffer.bindMemory(to: UInt8.self)
                                 memcpy(&pktType, rawBytes.baseAddress!, MemoryLayout<UInt32>.size)
-                                memcpy(&valueBitPattern, rawBytes.baseAddress! + MemoryLayout<UInt32>.size, MemoryLayout<UInt32>.size)
                             }
                             
+                            // Extract the string data after the packet type
+                            let startIndex = MemoryLayout<UInt32>.size
+                            stringData = data.subdata(in: startIndex..<data.count)
+                            
                             let pktTypeHost = UInt32(littleEndian: pktType)
-                            let value = Float(bitPattern: valueBitPattern)
                             
-                            print("📦 Decoded packet - Type: \(pktTypeHost), Value: \(value)")
-                            
-                            // Update the UI
-                            DispatchQueue.main.async {
-                                self.receivedPktType = String(pktTypeHost)
-                                self.receivedTemperature = String(format: "%.1f°", value)
+                            if let valueStr = String(data: stringData, encoding: .utf8) {
+                                print("📦 Decoded packet - Type: \(pktTypeHost), Value: \(valueStr)")
                                 
-                                if pktTypeHost == 1 {
-                                    // Store the value as ventID
-                                    let ventID = Int(value)  // Convert float value to integer
-                                    // Setup success received with ventID
-                                    NotificationCenter.default.post(
-                                        name: .ventSetupComplete,
-                                        object: nil,
-                                        userInfo: ["ventID": ventID]  // Pass the ventID in the notification
-                                    )
-                                } else if pktTypeHost <= 5 {
-                                    // Update the corresponding vent's temperature
-                                    if let ventIndex = self.vents.firstIndex(where: { $0.id == Int(pktTypeHost) }) {
-                                        self.vents[ventIndex].temperature = String(format: "%.1f", value)
+                                // Update the UI
+                                DispatchQueue.main.async {
+                                    self.receivedPktType = String(pktTypeHost)
+                                    
+                                    if pktTypeHost == 2 {
+                                        // Parse string in format "ventID.temperature"
+                                        let components = valueStr.split(separator: ".")
+                                        print("Split components: \(components)") // Add debug print
+                                        
+                                        // For "1.25.0", components will be ["1", "25", "0"]
+                                        if components.count >= 3,
+                                           let ventId = Int(components[0]),
+                                           let temperature = Float(components[1] + "." + components[2]) {
+                                            print("Parsed ventId: \(ventId), temperature: \(temperature)") // Add debug print
+                                            
+                                            // Find and update the vent with matching ID
+                                            if let ventIndex = self.vents.firstIndex(where: { $0.id == ventId }) {
+                                                self.vents[ventIndex].temperature = String(format: "%.1f", temperature)
+                                                print("Updated vent \(ventId) temperature to \(temperature)") // Add debug print
+                                            } else {
+                                                print("Could not find vent with ID \(ventId)") // Add debug print
+                                            }
+                                        } else {
+                                            print("Failed to parse components: \(components)") // Add debug print
+                                        }
+                                    } else if pktTypeHost == 1 {
+                                        // Setup success received with VentID in string format
+                                        if let ventId = Int(valueStr) {  // Convert string to integer
+                                            NotificationCenter.default.post(
+                                                name: .ventSetupComplete,
+                                                object: nil,
+                                                userInfo: ["ventID": ventId]
+                                            )
+                                        }
                                     }
                                 }
                             }

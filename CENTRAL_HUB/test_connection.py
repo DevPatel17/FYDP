@@ -42,9 +42,27 @@ async def connect_to_ble_client(VentID, phone_connection):
         
         # Define notification callback
         def notification_handler(sender, data):
-            logger.info(f"Received notification: {data.decode()}")
-            if data.decode() == "Accepted":
-                phone_connection.send_packet(1, VentID) # Send success packet containing the VentID to the iPhone
+            message = data.decode()
+            logger.info(f"Received notification: {message}")
+            
+            if message == "Connected":
+                phone_connection.send_packet(1, str(VentID)) # Send packet to phone to let it know the vent is connected
+            else:
+                try:
+                    # Parse message in format "ID: X, temp: Y"
+                    if "ID:" in message and "temp:" in message:
+                        # Split message into parts and extract values
+                        parts = message.split(',')
+                        vent_id = int(parts[0].split(':')[1].strip())
+                        temp = float(parts[1].split(':')[1].strip())
+                        
+                        logger.info(f"Parsed - Vent ID: {vent_id}, Temperature: {temp}")
+                        
+                        # Send type 2 packet with combined vent ID and temperature
+                        value_str = f"{vent_id}.{temp}"
+                        phone_connection.send_packet(2, value_str)                   
+                except Exception as e:
+                    logger.error(f"Error parsing message: {e}")
             
         async with BleakClient(device.address) as client:
             logger.info(f"Connected to {device.name}")
@@ -61,7 +79,6 @@ async def connect_to_ble_client(VentID, phone_connection):
             # Wait for notification in a loop
             # while True:
             #     await asyncio.sleep(1)
-            # phone_connection.send_packet(1, VentID)  # Send success packet containing the VentID to the iPhone
 
             return client   
     except Exception as e:
@@ -177,8 +194,16 @@ class VentCommunicator:
             print("No phone address known yet")
             return
             
-        # Create packet (same format as iOS app)
-        packet = struct.pack('<If', pkt_type, value)
+        # Pack the packet type as a 32-bit integer
+        packet = struct.pack('<I', pkt_type)
+        
+        # If value is a string, encode it and append to packet
+        if isinstance(value, str):
+            packet += value.encode('utf-8')
+        else:
+            # Keep old float packing for backwards compatibility
+            packet = struct.pack('<If', pkt_type, value)
+            
         try:
             # Send to port 3001 (matches iOS app's listening port)
             send_address = (self.phone_address[0], 3001)

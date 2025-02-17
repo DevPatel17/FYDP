@@ -30,27 +30,41 @@ static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_g
     printf("Data from the client: %s\n", received_str);
 
     // Check if the message starts with "Connected, Vent ID: "
+    // This part is only relevant for initial vent setup
     const char* prefix = "Connected, Vent ID: ";
     if (strncmp(received_str, prefix, strlen(prefix)) == 0) {
         // Extract the ventID number, VentID is a global
         /* All packets sent going forward will be prefixed with VentID to tell the Central Hub which vent the
             packet is coming from
         */
-        
         if (sscanf(received_str + strlen(prefix), "%d", &VentID) == 1) {
             printf("Extracted Vent ID: %d\n", VentID);
             
             // Send response using notification
             // TODO: Unable to read message content at the Pi at the moment
              // Send "Accepted" message back to the client
-            const char *response = "Accepted";
+            const char *response = "Connected";
             struct os_mbuf *om = ble_hs_mbuf_from_flat(response, strlen(response));
             if (om == NULL) {
                 printf("Failed to allocate buffer for notification\n");
             }
             int rc = ble_gatts_notify_custom(conn_handle, your_read_attr_handle, om);
-                printf("Sending notification: %s (result: %d)\n", response, rc);
+            printf("Sending notification: %s (result: %d)\n", response, rc);
+
+            // Sleep for 2 seconds
+            vTaskDelay(pdMS_TO_TICKS(5000));
+
+            // Send temperature packet
+            char temp_message[50];
+            snprintf(temp_message, sizeof(temp_message), "ID: %d, temp: %.1f", VentID, 25.0f);
+            om = ble_hs_mbuf_from_flat(temp_message, strlen(temp_message));
+            if (om == NULL) {
+                printf("Failed to allocate buffer for temperature notification\n");
             }
+            rc = ble_gatts_notify_custom(conn_handle, your_read_attr_handle, om);
+            printf("Sending notification: %s (result: %d)\n", temp_message, rc);
+        }
+            
     }
     return 0;
 }
