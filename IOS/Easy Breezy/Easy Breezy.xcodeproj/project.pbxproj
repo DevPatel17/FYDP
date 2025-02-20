@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -24,6 +24,12 @@
 		E3C730662C4771C300887D88 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		E3C8A56D2C520D7D003014C8 /* LITE4X10BLK.webp */ = {isa = PBXFileReference; lastKnownFileType = file; path = LITE4X10BLK.webp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		E33C43502D67DEDB00BB63E0 /* Models */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Models; sourceTree = "<group>"; };
+		E33C43542D67DF0A00BB63E0 /* Extensions */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Extensions; sourceTree = "<group>"; };
+		E33C435D2D67DF7600BB63E0 /* Components */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Components; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		E3C730582C4771C200887D88 /* Frameworks */ = {
@@ -55,6 +61,9 @@
 		E3C7305D2C4771C200887D88 /* Easy Breezy */ = {
 			isa = PBXGroup;
 			children = (
+				E33C435D2D67DF7600BB63E0 /* Components */,
+				E33C43542D67DF0A00BB63E0 /* Extensions */,
+				E33C43502D67DEDB00BB63E0 /* Models */,
 				E35CD9242D5D804D0099D410 /* Easy-Breezy-Info.plist */,
 				E3C7305E2C4771C200887D88 /* Easy_BreezyApp.swift */,
 				E3C8A56D2C520D7D003014C8 /* LITE4X10BLK.webp */,
@@ -88,6 +97,11 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E33C43502D67DEDB00BB63E0 /* Models */,
+				E33C43542D67DF0A00BB63E0 /* Extensions */,
+				E33C435D2D67DF7600BB63E0 /* Components */,
 			);
 			name = "Easy Breezy";
 			productName = "Easy Breezy";
