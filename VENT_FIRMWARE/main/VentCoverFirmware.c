@@ -5,6 +5,8 @@
 #include "sdkconfig.h"
 #include "threads/motor.c"
 #include "threads/ble_server.c"
+#include "threads/state_machine.c"
+#include "threads/temperature_sense.c"
 
 #define PROMPT_STR CONFIG_IDF_TARGET
 #define TASK_PRIO_3         3
@@ -13,18 +15,18 @@
 
 // Function declarations
 esp_err_t configure_stdin_stdout(void);
-void motor_task_entry(void *pvParameter);
+
 
 void app_main(void)
 {
     // Configure UART for standard I/O
     configure_stdin_stdout();
 
-    // Create the motor task
-    xTaskCreate(&motor_task_entry, "motor_task", 4096, NULL, 5, NULL);
+    // Create the temp sense task
+    xTaskCreate(&temp_sense_task_entry, "temp_sense_task_entry", 4096, NULL, tskIDLE_PRIORITY, NULL);
 
-    // Create the ble server task
-    xTaskCreate(&ble_server_task_entry, "ble_server_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
+    // // Create the motor task
+    // xTaskCreate(&state_machine_task_entry, "state_machine_task", 4096, NULL, 5, NULL);
 }
 
 esp_err_t configure_stdin_stdout(void)
