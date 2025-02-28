@@ -17,6 +17,8 @@ struct AddVentView: View {
     @State private var setupStage: SetupStage = .initial
     @State private var setupError: String? = nil
     @State private var receivedVentID: Int?
+    @State private var showingQRScanner = false
+    @State private var scannedCode: String? = nil
     
     // Add observer for setup completion
     init(vents: Binding<[Vent]>, onSendPacket: @escaping (Int, String) -> Void) {
@@ -54,16 +56,31 @@ struct AddVentView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                         
-                        Button(action: startSetup) {
-                            Text("Start Setup")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color(hex: "86B5A5"))
-                                .cornerRadius(12)
+                        Button(action: { showingQRScanner = true }) {
+                            HStack {
+                                Image(systemName: "qrcode.viewfinder")
+                                    .font(.system(size: 20))
+                                Text("Scan QR Code")
+                                    .font(.headline)
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color(hex: "86B5A5"))
+                            .cornerRadius(12)
                         }
                         .padding(.top)
+                        
+                        Button(action: startSetupWithoutQR) {
+                            Text("Manual Setup")
+                                .font(.headline)
+                                .foregroundColor(.white.opacity(0.8))
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.white.opacity(0.1))
+                                .cornerRadius(12)
+                        }
+                        .padding(.top, 8)
                     }
                     
                 case .searching:
@@ -80,6 +97,14 @@ struct AddVentView: View {
                             Text(error)
                                 .font(.subheadline)
                                 .foregroundColor(.red)
+                                .padding()
+                        }
+                        
+                        // Show the scanned code if available
+                        if let code = scannedCode {
+                            Text("Connecting to: \(code)")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.7))
                                 .padding()
                         }
                     }
@@ -120,13 +145,45 @@ struct AddVentView: View {
                 }
                 setupStage = .naming
             }
+            .sheet(isPresented: $showingQRScanner) {
+                QRScannerView(onCodeScanned: { code in
+                    self.scannedCode = code
+                    showingQRScanner = false
+                })
+            }
+            .onChange(of: showingQRScanner) { _, newValue in
+                if newValue == false && scannedCode != nil {
+                    // QR scanner was dismissed with a code
+                    // Wait a small delay to ensure the view has fully transitioned
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        startSetupWithQRCode(scannedCode!)
+                    }
+                }
+            }
         }
     }
     
-    private func startSetup() {
+    private func startSetupWithQRCode(_ code: String) {
+        print("QR Code scanned in AddVentView: \(code)")
         setupStage = .searching
         setupError = nil
-        onSendPacket(1, "0")  // Changed from (7, 1.0) to (1, 0.0)
+        
+        // Add additional verification
+        print("About to send packet with type 1 and value: \(code)")
+        
+        // Send the scanned QR code data with packet type 1
+        // Using a small delay to ensure view state has settled
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.onSendPacket(1, code)
+            print("Packet sending initiated")
+        }
+    }
+    
+    private func startSetupWithoutQR() {
+        setupStage = .searching
+        setupError = nil
+        // Original behavior - send empty data
+        onSendPacket(1, "0")
     }
     
     private func completeSetup() {

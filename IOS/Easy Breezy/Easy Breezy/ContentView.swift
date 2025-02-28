@@ -2,6 +2,8 @@ import CoreBluetooth
 import Network
 import SwiftUI
 
+
+
 struct ContentView: View {
     @State private var vents: [Vent] = []  // Start with empty array
     @State private var selectedVent: Vent? = nil
@@ -9,13 +11,36 @@ struct ContentView: View {
     @State private var receivedTemperature: String = ""
     @State private var showingSettings = false
     @State private var showingAddVent = false
+    
 
     func sendPacket(pktType: Int, value: String) {
+        print("🔵 SEND PACKET STARTED - Type: \(pktType), Value: \(value)")
+        
         let connection = NWConnection(
             host: "10.31.94.136",
             port: 5000,
             using: .udp
         )
+        
+        // Add state tracking for debugging
+        connection.stateUpdateHandler = { newState in
+            switch newState {
+            case .setup:
+                print("🔵 Connection state: setup")
+            case .preparing:
+                print("🔵 Connection state: preparing")
+            case .ready:
+                print("🔵 Connection state: ready")
+            case .waiting(let error):
+                print("🔵 Connection state: waiting with error: \(error)")
+            case .failed(let error):
+                print("❌ Connection state: failed with error: \(error)")
+            case .cancelled:
+                print("🔵 Connection state: cancelled")
+            @unknown default:
+                print("🔵 Connection state: unknown")
+            }
+        }
 
         connection.start(queue: .main)
 
@@ -29,6 +54,8 @@ struct ContentView: View {
         
         // Combine the packet type and string value
         let packetData = pktTypeData + valueData
+        
+        print("🔵 Preparing to send \(packetData.count) bytes")
 
         connection.send(
             content: packetData,
@@ -36,9 +63,13 @@ struct ContentView: View {
                 if let error = error {
                     print("❌ Send error: \(error.localizedDescription)")
                 } else {
-                    print("✅ Packet sent - Type: \(pktType), Value: \(value)")
+                    print("✅ Packet sent successfully - Type: \(pktType), Value: \(value)")
                 }
-                connection.cancel()
+                // Don't cancel the connection immediately to ensure the packet is sent
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    print("🔵 Cancelling connection after delay")
+                    connection.cancel()
+                }
             })
     }
 
@@ -104,8 +135,7 @@ struct ContentView: View {
         .background(Color(hex: "1C1C1E"))
         .sheet(isPresented: $showingAddVent) {
             AddVentView(vents: $vents, onSendPacket: sendPacket)
-        }
-    }
+        }}
 
     private var headerView: some View {
         HStack {
