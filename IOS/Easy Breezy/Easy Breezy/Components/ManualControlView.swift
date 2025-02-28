@@ -9,7 +9,8 @@ import SwiftUI
 
 struct ManualControlView: View {
     @Binding var position: String
-    let onPositionSet: (Float) -> Void
+    let onPositionSet: (String) -> Void
+    let vent_ID: String
     @State private var sliderValue: Double = 0
     @State private var isDragging: Bool = false
     
@@ -54,7 +55,7 @@ struct ManualControlView: View {
                                 }
                                 .onEnded { _ in
                                     isDragging = false
-                                    onPositionSet(Float(sliderValue))
+                                    onPositionSet(vent_ID + "." + String(Int(sliderValue)))
                                 }
                         )
                 }

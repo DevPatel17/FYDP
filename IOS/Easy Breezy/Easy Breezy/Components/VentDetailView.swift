@@ -41,7 +41,8 @@ struct VentDetailView: View {
                             position: $manualPosition,
                             onPositionSet: { position in
                                 onSendPacket(3, String(position))  // This will now use Bluetooth
-                            }
+                            },
+                            vent_ID: String(vent.id)
                         )
                     } else {
                         TemperatureControlView(
