@@ -12,7 +12,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # The device name we're looking for (same as in your ESP32 code)
-DEVICE_NAME = "BLE-Server"
+DEVICE_NAME1 = "BLE-Server"
+DEVICE_NAME2 = "BLE-Server-2"
 
 # The UUIDs from your ESP32 code
 READ_UUID = "00000180-0000-1000-8000-00805f9b34fb"    # Service UUID
@@ -24,13 +25,13 @@ loop = asyncio.new_event_loop()
 
 async def find_device():
     """Scan for the ESP32 device"""
-    logger.info(f"Scanning for {DEVICE_NAME}...")
+    logger.info(f"Scanning for {DEVICE_NAME1}...")
     
     while True:
         devices = await BleakScanner.discover()
         for device in devices:
-            if device.name == DEVICE_NAME:
-                logger.info(f"Found {DEVICE_NAME}: {device.address}")
+            if device.name == DEVICE_NAME1 or device.name == DEVICE_NAME2:
+                logger.info(f"Found {device.name}: {device.address}")
                 return device
         logger.info("Device not found, scanning again...")
         await asyncio.sleep(1)
@@ -416,7 +417,21 @@ class VentCommunicator:
         """Clean shutdown of the communicator"""
         print("Stopping communicator...")
         self.running = False
-        
+            # Properly disconnect all BLE connections
+        print("Disconnecting BLE devices...")
+        for vent in vent_system.vent_covers:
+            if vent.is_connected():
+                try:
+                # Create a future to execute the async disconnect operation
+                    future = asyncio.run_coroutine_threadsafe(
+                    vent.get_ble_connection().disconnect(),
+                    loop
+                    )
+                    # Wait for disconnect with timeout
+                    future.result(timeout=3.0)
+                    print(f"Disconnected vent {vent.vent_id} BLE connection")
+                except Exception as e:
+                    print(f"Error disconnecting vent {vent.vent_id}: {str(e)}")
         # Close the sockets
         try:
             self.recv_socket.close()
@@ -427,6 +442,7 @@ class VentCommunicator:
         # Wait for receive thread to finish (with timeout)
         print("Waiting for threads to finish...")
         self.recv_thread.join(timeout=2.0)  # Wait up to 2 seconds
+        
         
         # Clean up BLE threads
         for vent in vent_system.vent_covers:
