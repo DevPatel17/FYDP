@@ -95,12 +95,12 @@ async def run_ble_connection(client, VentID, phone_connection):
         logger.info(f"Sent message: {message.decode()}")
         
         # Send sequence of messages with delays
-        messages = ["1", "0", "1"]
-        for msg in messages:
-            await asyncio.sleep(3)
-            message_to_send = msg.encode()
-            await client.write_gatt_char(WRITE_UUID, message_to_send)
-            logger.info(f"Sent message: {message_to_send.decode()}")
+        # messages = ["1", "0", "1"]
+        # for msg in messages:
+        #     await asyncio.sleep(3)
+        #     message_to_send = msg.encode()
+        #     await client.write_gatt_char(WRITE_UUID, message_to_send)
+        #     logger.info(f"Sent message: {message_to_send.decode()}")
         
         # Keep the connection alive
         while True:
@@ -236,6 +236,40 @@ class VentCommunicator:
         
         # Flag for stopping the threads
         self.running = True
+    
+    def send_vent_position(self, vent, position):
+        """Send a position command to a vent over BLE"""
+        if not vent.is_connected():
+            print(f"Cannot send position to vent {vent.vent_id}: not connected")
+            return
+            
+        # Create a future to execute the async BLE write operation
+        async def send_position_command(client, position):
+            try:
+                # Encode the position command
+                message = position.encode()
+                await client.write_gatt_char(WRITE_UUID, message)
+                logger.info(f"Sent position command to vent {vent.vent_id}: {position}")
+                return True
+            except Exception as e:
+                logger.error(f"Error sending position to vent {vent.vent_id}: {str(e)}")
+                return False
+                
+        # Submit the task to the event loop
+        future = asyncio.run_coroutine_threadsafe(
+            send_position_command(vent.get_ble_connection(), position),
+            loop
+        )
+        
+        try:
+            # Wait for the operation to complete with a timeout
+            result = future.result(timeout=5.0)
+            if result:
+                print(f"Successfully sent position {position} to vent {vent.vent_id}")
+            else:
+                print(f"Failed to send position to vent {vent.vent_id}")
+        except Exception as e:
+            print(f"Error in send_vent_position: {str(e)}")
 
     def send_packet(self, pkt_type, value):
         """Send a packet to the phone"""
@@ -269,41 +303,71 @@ class VentCommunicator:
                 # Store the phone's address for sending responses
                 self.phone_address = address
                 
-                if len(data) >= 8:
-                    pkt_type = struct.unpack('<I', data[0:4])[0]
-                    value = struct.unpack('<f', data[4:8])[0]
-                    
-                    print(f'Received from {address}:')
-                    print(f'  Type: {pkt_type}')
-                    print(f'  Value: {value:.2f}')
-                    
-                    if pkt_type == 1:  # New vent setup request
-                        print("Received vent setup request, starting setup...")
-                        
-                        # Setup a new vent cover and store its VentID
-                        VentID = vent_system.add_vent_cover()
-                        
-                        try:
-                            # Connect to BLE client using the async loop
-                            future = asyncio.run_coroutine_threadsafe(connect_to_ble_client(VentID), loop)
-                            client, device = future.result()  # Wait for connection
+                # if len(data) >= 8:
+                pkt_type = struct.unpack('<I', data[0:4])[0]
+                # Extract the string value after the packet type
+                value_str = ""
+                if len(data) > 4:
+                    try:
+                        # Try to decode the remaining bytes as a UTF-8 string
+                        value_str = data[4:].decode('utf-8')
+                    except Exception as e:
+                        print(f"Error decoding string value: {e}")
+                
+                print(f'Received from {address}:')
+                print(f'  Type: {pkt_type}')
+                print(f'  Value: {value_str}')
+                
+                if pkt_type == 3:  # Vent position control request
+                    try:
+                        # Convert float value to string and parse as "VentID.VentPosition"
+                        # value_str = str(value)
+                        if '.' in value_str:
+                            parts = value_str.split('.')
+                            vent_id = int(parts[0])
+                            vent_position = parts[1]
                             
-                            if client:
-                                # Store BLE connection
-                                vent_system.get_vent_cover(VentID).set_ble_connection(client)
-                                
-                                # Start a thread to handle notifications and messages
-                                ble_thread = threading.Thread(
-                                    target=ble_connection_thread, 
-                                    args=(client, VentID, self)
-                                )
-                                vent_system.get_vent_cover(VentID).set_ble_thread(ble_thread)
-                                ble_thread.start()
+                            print(f"Vent control request - Vent ID: {vent_id}, Position: {vent_position}")
                             
-                        except KeyboardInterrupt:
-                            logger.info("Script terminated by user")
-                        except Exception as e:
-                            logger.error(f"Unexpected error: {str(e)}")
+                            # Get the vent cover and check if it has a BLE connection
+                            vent = vent_system.get_vent_cover(vent_id)
+                            if vent and vent.is_connected():
+                                # Send vent position command to the vent via BLE
+                                self.send_vent_position(vent, vent_position)
+                            else:
+                                print(f"Error: Vent {vent_id} not found or not connected")
+                        else:
+                            print(f"Error: Invalid value format for type 3 packet: {value_str}")
+                    except Exception as e:
+                        print(f"Error processing vent position packet: {e}")
+                
+                elif pkt_type == 1:  # New vent setup request
+                    print("Received vent setup request, starting setup...")
+                    
+                    # Setup a new vent cover and store its VentID
+                    VentID = vent_system.add_vent_cover()
+                    
+                    try:
+                        # Connect to BLE client using the async loop
+                        future = asyncio.run_coroutine_threadsafe(connect_to_ble_client(VentID), loop)
+                        client, device = future.result()  # Wait for connection
+                        
+                        if client:
+                            # Store BLE connection
+                            vent_system.get_vent_cover(VentID).set_ble_connection(client)
+                            
+                            # Start a thread to handle notifications and messages
+                            ble_thread = threading.Thread(
+                                target=ble_connection_thread, 
+                                args=(client, VentID, self)
+                            )
+                            vent_system.get_vent_cover(VentID).set_ble_thread(ble_thread)
+                            ble_thread.start()
+                        
+                    except KeyboardInterrupt:
+                        logger.info("Script terminated by user")
+                    except Exception as e:
+                        logger.error(f"Unexpected error: {str(e)}")
                         
             except socket.timeout:
                 # This is normal, just continue the loop

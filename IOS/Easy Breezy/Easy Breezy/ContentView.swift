@@ -10,7 +10,7 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingAddVent = false
 
-    func sendPacket(pktType: Int, value: Float) {
+    func sendPacket(pktType: Int, value: String) {
         let connection = NWConnection(
             host: "10.31.94.136",
             port: 5000,
@@ -20,10 +20,14 @@ struct ContentView: View {
         connection.start(queue: .main)
 
         var pktTypeLE = UInt32(pktType).littleEndian
-        var valueLE = value.bitPattern.littleEndian
-
+        
+        // Pack the packet type as a 32-bit integer
         let pktTypeData = Data(bytes: &pktTypeLE, count: 4)
-        let valueData = Data(bytes: &valueLE, count: 4)
+        
+        // Convert the string value to UTF-8 data
+        let valueData = value.data(using: .utf8) ?? Data()
+        
+        // Combine the packet type and string value
         let packetData = pktTypeData + valueData
 
         connection.send(
@@ -72,8 +76,8 @@ struct ContentView: View {
                             onToggle: {
                                 vent.isOpen.toggle()
                                 sendPacket(
-                                    pktType: Int(UInt32(vent.id)),
-                                    value: vent.isOpen ? 1.0 : 0.0
+                                    pktType: 3,
+                                    value: String(String(vent.id) + "." + (vent.isOpen ? "100" : "0"))
                                 )
                             }
                         )

@@ -11,7 +11,7 @@ struct VentDetailView: View {
     @Binding var vent: Vent
     @Binding var receivedPktType: String
     @Binding var receivedTemperature: String
-    let onSendPacket: (Int, Float) -> Void
+    let onSendPacket: (Int, String) -> Void
 
     @Environment(\.dismiss) var dismiss
     @State private var tempAdjustment: String = ""
@@ -40,7 +40,7 @@ struct VentDetailView: View {
                         ManualControlView(
                             position: $manualPosition,
                             onPositionSet: { position in
-                                onSendPacket(3, position)  // This will now use Bluetooth
+                                onSendPacket(3, String(position))  // This will now use Bluetooth
                             }
                         )
                     } else {
@@ -48,7 +48,7 @@ struct VentDetailView: View {
                             temperature: $tempAdjustment,
                             onTemperatureSet: { temp in
                                 vent.targetTemp = tempAdjustment
-                                onSendPacket(2, temp)  // This will now use Bluetooth
+                                onSendPacket(2, String(temp))  // This will now use Bluetooth
                             }
                         )
                     }

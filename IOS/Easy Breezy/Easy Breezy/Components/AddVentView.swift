@@ -11,7 +11,7 @@ import SwiftUI
 struct AddVentView: View {
     @Environment(\.dismiss) var dismiss
     @Binding var vents: [Vent]
-    let onSendPacket: (Int, Float) -> Void
+    var onSendPacket: (Int, String) -> Void
     
     @State private var ventName: String = ""
     @State private var setupStage: SetupStage = .initial
@@ -19,7 +19,7 @@ struct AddVentView: View {
     @State private var receivedVentID: Int?
     
     // Add observer for setup completion
-    init(vents: Binding<[Vent]>, onSendPacket: @escaping (Int, Float) -> Void) {
+    init(vents: Binding<[Vent]>, onSendPacket: @escaping (Int, String) -> Void) {
         self._vents = vents
         self.onSendPacket = onSendPacket
         
@@ -126,7 +126,7 @@ struct AddVentView: View {
     private func startSetup() {
         setupStage = .searching
         setupError = nil
-        onSendPacket(1, 0.0)  // Changed from (7, 1.0) to (1, 0.0)
+        onSendPacket(1, "0")  // Changed from (7, 1.0) to (1, 0.0)
     }
     
     private func completeSetup() {
