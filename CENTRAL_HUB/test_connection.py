@@ -19,9 +19,8 @@ READ_UUID = "00000180-0000-1000-8000-00805f9b34fb"    # Service UUID
 WRITE_UUID = "0000dead-0000-1000-8000-00805f9b34fb"   # Write characteristic UUID
 READ_CHAR_UUID = "0000fef4-0000-1000-8000-00805f9b34fb"  # Read characteristic UUID
 
-async def notification_handler(sender, data):
-    """Handle incoming notifications from the BLE device"""
-    logger.info(f"Received data: {data.decode()}")
+# Create a global event loop to be shared across threads
+loop = asyncio.new_event_loop()
 
 async def find_device():
     """Scan for the ESP32 device"""
@@ -36,10 +35,30 @@ async def find_device():
         logger.info("Device not found, scanning again...")
         await asyncio.sleep(1)
 
-async def connect_to_ble_client(VentID, phone_connection):
+async def connect_to_ble_client(VentID):
+    """
+    Connects to the BLE device and returns the client object
+    without setting up notifications or sending messages
+    """
     try:
         device = await find_device()
-        
+        client = BleakClient(device.address)
+        await client.connect()
+        logger.info(f"Connected to {device.name}")
+        return client, device
+    except Exception as e:
+        logger.error(f"Error connecting to BLE device: {str(e)}")
+        return None, None
+
+async def run_ble_connection(client, VentID, phone_connection):
+    """
+    Async function to handle BLE connection notifications and messages
+    """
+    if not client:
+        logger.error("No client provided")
+        return
+
+    try:
         # Define notification callback
         def notification_handler(sender, data):
             message = data.decode()
@@ -60,37 +79,62 @@ async def connect_to_ble_client(VentID, phone_connection):
                         
                         # Send type 2 packet with combined vent ID and temperature
                         value_str = f"{vent_id}.{temp}"
-                        phone_connection.send_packet(2, value_str)                   
+                        phone_connection.send_packet(2, value_str) 
+                        
+                        #TODO Put new temperature into PID controller here                  
                 except Exception as e:
                     logger.error(f"Error parsing message: {e}")
-            
-        async with BleakClient(device.address) as client:
-            logger.info(f"Connected to {device.name}")
 
-            # Enable notifications for the characteristic
-            await client.start_notify(READ_CHAR_UUID, notification_handler)
-            logger.info("Notifications enabled")
+        # Enable notifications for the characteristic
+        await client.start_notify(READ_CHAR_UUID, notification_handler)
+        logger.info("Notifications enabled")
 
-            # Write data
-            message = f"Connected, Vent ID: {VentID}".encode()
-            await client.write_gatt_char(WRITE_UUID, message)
-            logger.info(f"Sent message: {message.decode()}")
-            
-            # Wait for notification in a loop
-            # while True:
-            #     await asyncio.sleep(1)
-
-            return client   
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        # Write initial connection message
+        message = f"Connected, Vent ID: {VentID}".encode()
+        await client.write_gatt_char(WRITE_UUID, message)
+        logger.info(f"Sent message: {message.decode()}")
         
+        # Send sequence of messages with delays
+        messages = ["1", "0", "1"]
+        for msg in messages:
+            await asyncio.sleep(3)
+            message_to_send = msg.encode()
+            await client.write_gatt_char(WRITE_UUID, message_to_send)
+            logger.info(f"Sent message: {message_to_send.decode()}")
         
+        # Keep the connection alive
+        while True:
+            await asyncio.sleep(1)
 
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        if 'client' in locals():
+        logger.error(f"Error in BLE connection: {str(e)}")
+    finally:
+        try:
             await client.disconnect()
-        return None
+        except:
+            pass
+
+def ble_connection_thread(client, VentID, phone_connection):
+    """
+    Thread function to handle BLE connection
+    This function sets up a new event loop for the thread
+    """
+    # Set the event loop for this thread
+    asyncio.set_event_loop(loop)
+    
+    # Submit the task to the event loop
+    future = asyncio.run_coroutine_threadsafe(
+        run_ble_connection(client, VentID, phone_connection), 
+        loop
+    )
+    
+    # You can handle exceptions from the future if needed
+    try:
+        # This will block until the future completes
+        future.result()
+    except Exception as e:
+        logger.error(f"Error in BLE connection thread: {str(e)}")
+
 
 class VentCover:
     # Class variable to keep track of the next available ventID
@@ -101,6 +145,7 @@ class VentCover:
         self.vent_cover_status = int(vent_cover_status)
         self.user_forced = bool(user_forced)
         self.ble_connection = None  # Default to no connection
+        self.ble_thread = None
         # If no vent_id provided, assign the next available one
         if vent_id is None:
             self.vent_id = VentCover.next_vent_id
@@ -108,6 +153,10 @@ class VentCover:
         else:
             self.vent_id = int(vent_id)
     
+    def set_ble_thread(self, connection):
+        """Set the BLE thread for this vent"""
+        self.ble_thread = connection
+        
     def set_ble_connection(self, connection):
         """Set the BLE connection for this vent"""
         self.ble_connection = connection
@@ -213,15 +262,12 @@ class VentCommunicator:
             print(f'Error sending packet: {e}')
 
     def receive_packets(self):
-        # """Listen for incoming packets from the phone"""
         while self.running:
             try:
-                # print('\nWaiting for packet...')
                 data, address = self.recv_socket.recvfrom(1024)
                 
                 # Store the phone's address for sending responses
                 self.phone_address = address
-                # VentConnection = BleakClient()
                 
                 if len(data) >= 8:
                     pkt_type = struct.unpack('<I', data[0:4])[0]
@@ -234,25 +280,30 @@ class VentCommunicator:
                     if pkt_type == 1:  # New vent setup request
                         print("Received vent setup request, starting setup...")
                         
-                        # Setup a new vent cover and store it's VentID
-                        # By Default, user_forced is false, temp = 0, vent is open
+                        # Setup a new vent cover and store its VentID
                         VentID = vent_system.add_vent_cover()
                         
-                        # TODO: Put this in a new thread
-                        # Look for ESP32, send it it's associated VentID, wait for accepted message, send iPhone messaged that setup was completed
                         try:
-                            VentConnection = asyncio.run(connect_to_ble_client(VentID, self))
-                            # Store BLE connection
-                            vent_system.get_vent_cover(VentID).set_ble_connection(VentConnection)
+                            # Connect to BLE client using the async loop
+                            future = asyncio.run_coroutine_threadsafe(connect_to_ble_client(VentID), loop)
+                            client, device = future.result()  # Wait for connection
+                            
+                            if client:
+                                # Store BLE connection
+                                vent_system.get_vent_cover(VentID).set_ble_connection(client)
+                                
+                                # Start a thread to handle notifications and messages
+                                ble_thread = threading.Thread(
+                                    target=ble_connection_thread, 
+                                    args=(client, VentID, self)
+                                )
+                                vent_system.get_vent_cover(VentID).set_ble_thread(ble_thread)
+                                ble_thread.start()
+                            
                         except KeyboardInterrupt:
                             logger.info("Script terminated by user")
                         except Exception as e:
                             logger.error(f"Unexpected error: {str(e)}")
-                        
-                        
-                    # elif pkt_type <= 5:  # If it's a regular vent command
-                    #     # Simulate sending back current temperature
-                    #     self.send_packet(pkt_type, 22.5)
                         
             except socket.timeout:
                 # This is normal, just continue the loop
@@ -276,6 +327,10 @@ class VentCommunicator:
         except Exception as e:
             print(f'Could not determine IP address: {e}')
         
+        # Start the event loop in a separate thread
+        loop_thread = threading.Thread(target=self.run_event_loop, daemon=True)
+        loop_thread.start()
+        
         # Start receive thread
         self.recv_thread = threading.Thread(target=self.receive_packets)
         self.recv_thread.start()
@@ -283,14 +338,15 @@ class VentCommunicator:
         # Main loop for testing
         try:
             while True:
-                time.sleep(5)  # Send a test packet every 5 seconds if we have a phone address
-                # if self.phone_address and self.running:
-                    # Example: send temperature updates
-                    # for vent_id in range(6):
-                    #     self.send_packet(vent_id, 22.5 + vent_id)
+                time.sleep(5)  # Sleep for 5 seconds between iterations
         except KeyboardInterrupt:
             print("\nShutting down...")
             self.stop()
+
+    def run_event_loop(self):
+        """Run the asyncio event loop in a separate thread"""
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
 
     def stop(self):
         """Clean shutdown of the communicator"""
@@ -307,6 +363,15 @@ class VentCommunicator:
         # Wait for receive thread to finish (with timeout)
         print("Waiting for threads to finish...")
         self.recv_thread.join(timeout=2.0)  # Wait up to 2 seconds
+        
+        # Clean up BLE threads
+        for vent in vent_system.vent_covers:
+            if vent.ble_thread:
+                vent.ble_thread.join(timeout=2.0)
+        
+        # Stop the event loop
+        loop.call_soon_threadsafe(loop.stop)
+        
         if self.recv_thread.is_alive():
             print("Warning: Thread did not terminate cleanly")
         else:
