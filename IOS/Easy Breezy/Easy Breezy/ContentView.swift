@@ -13,7 +13,7 @@ struct ContentView: View {
     func sendPacket(pktType: Int, value: String) {
         let connection = NWConnection(
             host: "10.31.94.136",
-            port: 5000,
+            port: 5001,
             using: .udp
         )
 

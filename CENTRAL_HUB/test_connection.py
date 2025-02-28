@@ -225,7 +225,7 @@ class VentCommunicator:
     def __init__(self):
         # Socket for receiving
         self.recv_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.recv_socket.bind(('0.0.0.0', 5000))
+        self.recv_socket.bind(('0.0.0.0', 5001))
         self.recv_socket.settimeout(1.0)  # Add 1 second timeout
         
         # Socket for sending
