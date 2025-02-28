@@ -7,105 +7,205 @@
 
 import SwiftUI
 import AVFoundation
+import AudioToolbox
 
-struct QRScannerView: UIViewRepresentable {
-    var onCodeScanned: (String) -> Void
-    @Binding var errorMessage: String?
+struct QRScannerView: View {
+    @Environment(\.dismiss) var dismiss
+    @State private var isShowingCamera = false
+    @State private var scannedCode: String?
+    @State private var showAlert = false
     
-    class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
-        var parent: QRScannerView
-        
-        init(parent: QRScannerView) {
-            self.parent = parent
-        }
-        
-        func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
-            if let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject {
-                guard let stringValue = metadataObject.stringValue else { return }
-                AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
-                parent.onCodeScanned(stringValue)
+    // Simple callback when code is scanned
+    var onCodeScanned: (String) -> Void
+    
+    var body: some View {
+        ZStack {
+            Color(hex: "1C1C1E").edgesIgnoringSafeArea(.all)
+            
+            VStack(spacing: 16) {
+                Text("Scan Vent QR Code")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                
+                Text("Position the QR code within the frame to set up your vent")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                if isShowingCamera {
+                    QRCodeCameraView(scannedCode: $scannedCode)
+                        .frame(height: 600)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .padding()
+                        .onChange(of: scannedCode) { _, newValue in
+                            if let code = newValue {
+                                // First process the scanned code
+                                print("QR code scanned in view: \(code)")
+                                
+                                // Provide feedback
+                                AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
+                                
+                                // Pass the code back to the parent view
+                                onCodeScanned(code)
+                            }
+                        }
+                } else {
+                    Button(action: {
+                        // Check for camera permission first
+                        checkCameraPermission()
+                    }) {
+                        VStack {
+                            Image(systemName: "qrcode.viewfinder")
+                                .font(.system(size: 60))
+                                .foregroundColor(.white)
+                            
+                            Text("Start Scanning")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .padding(.top, 8)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(hex: "86B5A5"))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
+                    }
+                }
+                
+                Button("Cancel") {
+                    dismiss()
+                }
+                .foregroundColor(.white)
+                .padding(.top)
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(
+                    title: Text("Camera Access Required"),
+                    message: Text("Please allow camera access in Settings to scan QR codes."),
+                    primaryButton: .default(Text("Settings"), action: {
+                        // Open app settings
+                        if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(settingsURL)
+                        }
+                    }),
+                    secondaryButton: .cancel()
+                )
             }
         }
     }
     
-    func makeCoordinator() -> Coordinator {
-        return Coordinator(parent: self)
-    }
-    
-    func makeUIView(context: Context) -> UIView {
-        let captureView = UIView(frame: .zero)
-        
-        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
-        switch authStatus {
+    private func checkCameraPermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            setupCaptureSession(captureView, context: context)
+            // Already authorized
+            isShowingCamera = true
         case .notDetermined:
+            // Request permission
             AVCaptureDevice.requestAccess(for: .video) { granted in
-                if granted {
-                    DispatchQueue.main.async {
-                        setupCaptureSession(captureView, context: context)
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.errorMessage = "Camera access is required to scan QR codes."
+                DispatchQueue.main.async {
+                    if granted {
+                        isShowingCamera = true
+                    } else {
+                        showAlert = true
                     }
                 }
             }
         case .denied, .restricted:
-            DispatchQueue.main.async {
-                self.errorMessage = "Camera access is required to scan QR codes. Please enable it in Settings."
-            }
+            // Show alert to go to settings
+            showAlert = true
         @unknown default:
-            DispatchQueue.main.async {
-                self.errorMessage = "Unknown camera authorization status."
-            }
+            // Handle any future cases
+            showAlert = true
         }
-        
-        return captureView
     }
+}
+
+// Camera view for QR code scanning
+struct QRCodeCameraView: UIViewRepresentable {
+    @Binding var scannedCode: String?
     
-    private func setupCaptureSession(_ captureView: UIView, context: Context) {
-        guard let captureDevice = AVCaptureDevice.default(for: .video) else {
-            errorMessage = "Could not access camera."
-            return
-        }
+    let captureSession = AVCaptureSession()
+    
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: UIScreen.main.bounds)
+        view.backgroundColor = UIColor.black
         
-        guard let captureDeviceInput = try? AVCaptureDeviceInput(device: captureDevice) else {
-            errorMessage = "Could not create camera input."
-            return
-        }
+        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else { return view }
         
-        let captureSession = AVCaptureSession()
-        
-        // Set the preview layer
-        let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
-        previewLayer.frame = captureView.layer.bounds
-        previewLayer.videoGravity = .resizeAspectFill
-        captureView.layer.addSublayer(previewLayer)
-        
-        // We'll handle frame updates in updateUIView instead of with notifications
-        
-        let metadataOutput = AVCaptureMetadataOutput()
-        
-        if captureSession.canAddInput(captureDeviceInput) && captureSession.canAddOutput(metadataOutput) {
-            captureSession.addInput(captureDeviceInput)
-            captureSession.addOutput(metadataOutput)
-            
-            metadataOutput.setMetadataObjectsDelegate(context.coordinator, queue: DispatchQueue.main)
-            metadataOutput.metadataObjectTypes = [.qr]
-            
-            DispatchQueue.global(qos: .background).async {
-                captureSession.startRunning()
+        // Configure capture session
+        do {
+            let videoInput = try AVCaptureDeviceInput(device: videoCaptureDevice)
+            if captureSession.canAddInput(videoInput) {
+                captureSession.addInput(videoInput)
+            } else {
+                return view
             }
-        } else {
-            errorMessage = "Could not setup camera for QR scanning."
+            
+            let metadataOutput = AVCaptureMetadataOutput()
+            if captureSession.canAddOutput(metadataOutput) {
+                captureSession.addOutput(metadataOutput)
+                
+                metadataOutput.setMetadataObjectsDelegate(context.coordinator, queue: DispatchQueue.main)
+                metadataOutput.metadataObjectTypes = [.qr]
+            } else {
+                return view
+            }
+            
+            // Add preview layer
+            let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+            previewLayer.frame = view.layer.bounds
+            previewLayer.videoGravity = .resizeAspectFill
+            view.layer.addSublayer(previewLayer)
+            
+            // Start capture session on background thread
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.captureSession.startRunning()
+            }
+        } catch {
+            print("Error setting up camera: \(error)")
         }
+        
+        return view
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
-        // Update the preview layer frame when the view size changes
-        if let previewLayer = uiView.layer.sublayers?.first as? AVCaptureVideoPreviewLayer {
-            previewLayer.frame = uiView.layer.bounds
+        // No updates needed
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
+        var parent: QRCodeCameraView
+        var codeProcessed = false
+        
+        init(_ parent: QRCodeCameraView) {
+            self.parent = parent
+        }
+        
+        func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+            guard !codeProcessed,
+                  let metadataObject = metadataObjects.first,
+                  let readableObject = metadataObject as? AVMetadataMachineReadableCodeObject,
+                  let stringValue = readableObject.stringValue else { return }
+            
+            // Prevent multiple processing of the same code
+            codeProcessed = true
+            
+            print("QR code detected: \(stringValue)")
+            
+            // Update the binding on the main thread
+            DispatchQueue.main.async {
+                self.parent.scannedCode = stringValue
+                
+                // Stop the capture session after getting a valid code
+                DispatchQueue.global(qos: .userInitiated).async {
+                    self.parent.captureSession.stopRunning()
+                }
+            }
         }
     }
 }
