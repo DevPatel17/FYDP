@@ -89,8 +89,12 @@ class VentStore: ObservableObject {
         
         // Start with higher placeholder IDs to avoid conflicts with real vents
         vents = [
-            Vent(id: 1000, room: "Living Room", temperature: "22.0", targetTemp: "21.5", isOpen: true),
-            Vent(id: 1001, room: "Bedroom", temperature: "20.5", targetTemp: "20.0", isOpen: false)
+            Vent(id: 1000, room: "Living Room", temperature: "22.0", targetTemp: "21.5", isOpen: true, isManualMode: false),
+            Vent(id: 1001, room: "Bedroom", temperature: "20.5", targetTemp: "20.0", isOpen: false, isManualMode: true),
+            Vent(id: 1200, room: "Kitchen", temperature: "25.0", targetTemp: "21.5", isOpen: true, isManualMode: false),
+            Vent(id: 12001, room: "Basement", temperature: "20.5", targetTemp: "20.0", isOpen: false, isManualMode: true),
+            Vent(id: 10030, room: "Family Room", temperature: "22.0", targetTemp: "21.5", isOpen: true, isManualMode: false),
+            Vent(id: 1401, room: "Garage", temperature: "10.5", targetTemp: "20.0", isOpen: false, isManualMode: true),
         ]
         
         print("Added placeholder vents with IDs 1000 and 1001")
@@ -172,6 +176,7 @@ class VentStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: saveKey)
         UserDefaults.standard.removeObject(forKey: "VentsEverSaved")
         vents = []
+        addPlaceholderVents()
         objectWillChange.send()
     }
 }

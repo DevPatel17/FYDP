@@ -196,7 +196,9 @@ struct AddVentView: View {
             room: ventName,
             temperature: "20.0",
             targetTemp: "20.0",
-            isOpen: false
+            isOpen: false,
+            isManualMode: false,  // Initialize to temperature control mode by default
+            manualPosition: "0"   // Initialize manual position to 0 (closed)
         )
         
         // Add to the store (which handles persistence)

@@ -82,6 +82,8 @@ struct ContentView: View {
                                 // Update the persistence when toggling
                                 ventStore.updateVentProperty(id: vent.id) { updatedVent in
                                     updatedVent.isOpen.toggle()
+                                    // Using the manual toggle sets this vent to manual mode
+                                    updatedVent.isManualMode = true
                                 }
                                 
                                 // Use the opposite of the previous state to determine what to send
