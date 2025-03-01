@@ -10,7 +10,8 @@ import SwiftUI
 
 struct AddVentView: View {
     @Environment(\.dismiss) var dismiss
-    @Binding var vents: [Vent]
+    // Use VentStore instead of Binding to [Vent]
+    @ObservedObject var ventStore: VentStore
     var onSendPacket: (Int, String) -> Void
     
     @State private var ventName: String = ""
@@ -21,8 +22,8 @@ struct AddVentView: View {
     @State private var scannedCode: String? = nil
     
     // Add observer for setup completion
-    init(vents: Binding<[Vent]>, onSendPacket: @escaping (Int, String) -> Void) {
-        self._vents = vents
+    init(ventStore: VentStore, onSendPacket: @escaping (Int, String) -> Void) {
+        self.ventStore = ventStore
         self.onSendPacket = onSendPacket
         
         // Remove any existing observers to avoid duplicates
@@ -187,14 +188,25 @@ struct AddVentView: View {
     }
     
     private func completeSetup() {
+        // Use the next available vent ID if none was received
+        let ventId = receivedVentID ?? ventStore.getNextVentId()
+        
         let newVent = Vent(
-            id: receivedVentID ?? vents.count,  // Use received ventID if available
+            id: ventId,
             room: ventName,
             temperature: "20.0",
             targetTemp: "20.0",
             isOpen: false
         )
-        vents.append(newVent)
+        
+        // Add to the store (which handles persistence)
+        ventStore.addVent(newVent)
+        
+        // Debug print to verify the vent was added
+        print("Added new vent with ID: \(ventId), Name: \(ventName)")
+        print("Total vents in store: \(ventStore.vents.count)")
+        
+        // Dismiss the sheet
         dismiss()
     }
 }

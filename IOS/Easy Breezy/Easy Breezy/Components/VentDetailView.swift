@@ -40,7 +40,7 @@ struct VentDetailView: View {
                         ManualControlView(
                             position: $manualPosition,
                             onPositionSet: { position in
-                                onSendPacket(3, String(position))  // This will now use Bluetooth
+                                onSendPacket(3, String(vent.id) + "." + position)
                             },
                             vent_ID: String(vent.id)
                         )
@@ -48,8 +48,9 @@ struct VentDetailView: View {
                         TemperatureControlView(
                             temperature: $tempAdjustment,
                             onTemperatureSet: { temp in
-                                vent.targetTemp = tempAdjustment
-                                onSendPacket(2, String(temp))  // This will now use Bluetooth
+                                // Update target temperature in the vent
+                                vent.targetTemp = String(format: "%.1f", temp)
+                                onSendPacket(2, String(temp))
                             }
                         )
                     }
@@ -63,6 +64,13 @@ struct VentDetailView: View {
                         dismiss()
                     }
                 }
+            }
+            .onAppear {
+                // Initialize temperature adjustment with current target
+                tempAdjustment = vent.targetTemp
+                
+                // Initialize manual position based on open/closed state
+                manualPosition = vent.isOpen ? "100" : "0"
             }
         }
     }
