@@ -9,7 +9,8 @@ import SwiftUI
 
 struct ManualControlView: View {
     @Binding var position: String
-    let onPositionSet: (Float) -> Void
+    let onPositionSet: (String) -> Void
+    let vent_ID: String
     @State private var sliderValue: Double = 0
     @State private var isDragging: Bool = false
     
@@ -31,7 +32,7 @@ struct ManualControlView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(
                             LinearGradient(
-                                colors: [Color("86B5A5"), Color("86B5A5").opacity(0.7)],
+                                colors: [Color(hex: "86B5A5"), Color(hex: "86B5A5").opacity(0.7)],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )
@@ -54,7 +55,7 @@ struct ManualControlView: View {
                                 }
                                 .onEnded { _ in
                                     isDragging = false
-                                    onPositionSet(Float(sliderValue))
+                                    onPositionSet(vent_ID + "." + String(Int(sliderValue)))
                                 }
                         )
                 }
@@ -75,7 +76,14 @@ struct ManualControlView: View {
         .background(Color.white.opacity(0.05))
         .cornerRadius(14)
         .onAppear {
+            // Convert position string to Double, with a fallback to 0
             sliderValue = Double(position) ?? 0
+        }
+        .onChange(of: position) { _, newPosition in
+            // Update slider when position binding changes
+            if !isDragging {
+                sliderValue = Double(newPosition) ?? 0
+            }
         }
     }
 }

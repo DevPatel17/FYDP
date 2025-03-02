@@ -3,27 +3,32 @@ import Network
 import SwiftUI
 
 struct ContentView: View {
-    @State private var vents: [Vent] = []  // Start with empty array
+    // Use StateObject for the first creation of the store
+    @StateObject private var ventStore = VentStore()
     @State private var selectedVent: Vent? = nil
     @State private var receivedPktType: String = ""
     @State private var receivedTemperature: String = ""
     @State private var showingSettings = false
     @State private var showingAddVent = false
 
-    func sendPacket(pktType: Int, value: Float) {
+    func sendPacket(pktType: Int, value: String) {
         let connection = NWConnection(
-            host: "192.168.4.195",
-            port: 5000,
+            host: "10.31.94.136",
+            port: 5001,
             using: .udp
         )
 
         connection.start(queue: .main)
 
         var pktTypeLE = UInt32(pktType).littleEndian
-        var valueLE = value.bitPattern.littleEndian
-
+        
+        // Pack the packet type as a 32-bit integer
         let pktTypeData = Data(bytes: &pktTypeLE, count: 4)
-        let valueData = Data(bytes: &valueLE, count: 4)
+        
+        // Convert the string value to UTF-8 data
+        let valueData = value.data(using: .utf8) ?? Data()
+        
+        // Combine the packet type and string value
         let packetData = pktTypeData + valueData
 
         connection.send(
@@ -43,7 +48,7 @@ struct ContentView: View {
             mainView
                 .sheet(item: $selectedVent) { vent in
                     VentDetailView(
-                        vent: binding(for: vent),
+                        vent: ventStore.binding(for: vent),
                         receivedPktType: $receivedPktType,
                         receivedTemperature: $receivedTemperature,
                         onSendPacket: sendPacket
@@ -65,15 +70,26 @@ struct ContentView: View {
                         GridItem(.flexible()),
                     ], spacing: 16
                 ) {
-                    ForEach($vents) { $vent in
+                    ForEach(ventStore.vents) { vent in
+                        let binding = ventStore.binding(for: vent)
                         VentCard(
-                            vent: $vent,
+                            vent: binding,
                             onTap: { selectedVent = vent },
                             onToggle: {
-                                vent.isOpen.toggle()
+                                // First capture the current state before toggling
+                                let wasOpen = binding.wrappedValue.isOpen
+                                
+                                // Update the persistence when toggling
+                                ventStore.updateVentProperty(id: vent.id) { updatedVent in
+                                    updatedVent.isOpen.toggle()
+                                    // Using the manual toggle sets this vent to manual mode
+                                    updatedVent.isManualMode = true
+                                }
+                                
+                                // Use the opposite of the previous state to determine what to send
                                 sendPacket(
-                                    pktType: Int(UInt32(vent.id)),
-                                    value: vent.isOpen ? 1.0 : 0.0
+                                    pktType: 3,
+                                    value: String(String(vent.id) + "." + (!wasOpen ? "100" : "0"))
                                 )
                             }
                         )
@@ -99,7 +115,10 @@ struct ContentView: View {
         }
         .background(Color(hex: "1C1C1E"))
         .sheet(isPresented: $showingAddVent) {
-            AddVentView(vents: $vents, onSendPacket: sendPacket)
+            AddVentView(ventStore: ventStore, onSendPacket: sendPacket)
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(ventStore: ventStore)
         }
     }
 
@@ -139,14 +158,14 @@ struct ContentView: View {
                     .fontWeight(.bold)
                     .foregroundColor(.white)
 
-                Text("\(vents.count) Devices")
+                Text("\(ventStore.vents.count) Devices")
                     .font(.subheadline)
                     .foregroundColor(.gray)
             }
 
             Spacer()
 
-            Button(action: { showingSettings.toggle() }) {
+            Button(action: { showingSettings = true }) {
                 Image(systemName: "gearshape.fill")
                     .font(.title3)
                     .foregroundColor(.gray)
@@ -155,17 +174,12 @@ struct ContentView: View {
     }
 
     private var averageTemperature: String {
+        let vents = ventStore.vents
+        guard !vents.isEmpty else { return "0.0°C" }
+        
         let sum = vents.compactMap { Float($0.temperature) }.reduce(0, +)
         let avg = sum / Float(vents.count)
         return String(format: "%.1f°C", avg)
-    }
-
-    // Helper function to get binding for specific vent
-    private func binding(for vent: Vent) -> Binding<Vent> {
-        guard let index = vents.firstIndex(where: { $0.id == vent.id }) else {
-            fatalError("Vent not found")
-        }
-        return $vents[index]
     }
 
     // MARK: - Network Functions
@@ -230,19 +244,11 @@ struct ContentView: View {
                                     "Parsed ventId: \(ventId), temperature: \(temperature)"
                                 )  // Add debug print
 
-                                // Find and update the vent with matching ID
-                                if let ventIndex = self.vents.firstIndex(
-                                    where: { $0.id == ventId })
-                                {
-                                    self.vents[ventIndex].temperature = String(
-                                        format: "%.1f", temperature)
-                                    print(
-                                        "Updated vent \(ventId) temperature to \(temperature)"
-                                    )  // Add debug print
-                                } else {
-                                    print(
-                                        "Could not find vent with ID \(ventId)")  // Add debug print
+                                // Update the temperature in the persistent store
+                                self.ventStore.updateVentProperty(id: ventId) { vent in
+                                    vent.temperature = String(format: "%.1f", temperature)
                                 }
+                                print("Updated vent \(ventId) temperature to \(temperature)")
                             } else {
                                 print(
                                     "Failed to parse components: \(components)")  // Add debug print

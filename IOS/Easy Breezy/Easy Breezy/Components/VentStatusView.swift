@@ -10,7 +10,8 @@ import SwiftUI
 struct VentStatusView: View {
     let temperature: String
     let targetTemp: String
-
+    let isManualMode: Bool
+    
     var body: some View {
         VStack(spacing: 16) {
             Text("Current Status")
@@ -23,11 +24,15 @@ struct VentStatusView: View {
                     title: "Temperature",
                     value: temperature + "°C"
                 )
-                DataBadge(
-                    icon: "target",
-                    title: "Target",
-                    value: targetTemp + "°C"
-                )
+                
+                // Only show target temperature if NOT in manual mode
+                if !isManualMode {
+                    DataBadge(
+                        icon: "target",
+                        title: "Target",
+                        value: targetTemp + "°C"
+                    )
+                }
             }
         }
         .padding()
