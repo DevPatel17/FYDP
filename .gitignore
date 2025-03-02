@@ -32,3 +32,6 @@ SENSOR_FIRMWARE/main/build/*
 
 # MAC specicic files
 .DS_Store
+
+# Visual studio files
+.vscode/*
