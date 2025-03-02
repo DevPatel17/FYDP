@@ -80,6 +80,9 @@ void set_motor_duty(int duty)
     }
 }
 
+//min 170
+//max 1050
+// pin D2
 void motor_task_entry(void *pvParameter)
 {
     configure_motor_gpio();

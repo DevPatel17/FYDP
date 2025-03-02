@@ -12,12 +12,38 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "sdkconfig.h"
+#include <stdio.h>
+#include <stdlib.h>
+// #include "motor.c"
+
+#define MOTOR_CLOSE_PWM 170
+#define MOTOR_OPEN_PWM 1050
 
 char *BLE_TAG = "BLE_SERVER";
 uint8_t ble_addr_type;
 void ble_app_advertise(void);
 uint16_t your_read_attr_handle = 0;
+uint16_t g_conn_handle;
+struct os_mbuf *om;
+int rc = 0;
 int VentID = 0;
+
+void set_motor_duty(int duty);
+
+float get_latest_avg_temperature();
+
+
+void send_temperature_update(float temp) {
+    // Send temperature packet
+    char temp_message[50];
+    snprintf(temp_message, sizeof(temp_message), "ID: %d, temp: %.1f", VentID, temp);
+    om = ble_hs_mbuf_from_flat(temp_message, strlen(temp_message));
+    if (om == NULL) {
+        printf("Failed to allocate buffer for temperature notification\n");
+    }
+    rc = ble_gatts_notify_custom(g_conn_handle, your_read_attr_handle, om);
+    printf("Sending notification: %s (result: %d)\n", temp_message, rc);
+}
 
 // Write data to ESP32 defined as server
 static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -44,27 +70,33 @@ static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_g
             // TODO: Unable to read message content at the Pi at the moment
              // Send "Accepted" message back to the client
             const char *response = "Connected";
-            struct os_mbuf *om = ble_hs_mbuf_from_flat(response, strlen(response));
+            om = ble_hs_mbuf_from_flat(response, strlen(response));
             if (om == NULL) {
                 printf("Failed to allocate buffer for notification\n");
             }
-            int rc = ble_gatts_notify_custom(conn_handle, your_read_attr_handle, om);
-            printf("Sending notification: %s (result: %d)\n", response, rc);
 
-            // Sleep for 2 seconds
-            vTaskDelay(pdMS_TO_TICKS(5000));
-
-            // Send temperature packet
-            char temp_message[50];
-            snprintf(temp_message, sizeof(temp_message), "ID: %d, temp: %.1f", VentID, 25.0f);
-            om = ble_hs_mbuf_from_flat(temp_message, strlen(temp_message));
-            if (om == NULL) {
-                printf("Failed to allocate buffer for temperature notification\n");
-            }
+            // TODO: remove later
+            printf("ATTR HANDLE SHOULD BE SET!!!!\n");
             rc = ble_gatts_notify_custom(conn_handle, your_read_attr_handle, om);
-            printf("Sending notification: %s (result: %d)\n", temp_message, rc);
+            printf("Sending notification: %s (result: %d)\n", response, rc);
+            g_conn_handle = conn_handle;
+
+            // // // Sleep for 5 seconds
+            // vTaskDelay(pdMS_TO_TICKS(5000));
+
         }
             
+    }
+    else {
+        
+        int received_open_percentage = (int) atof(received_str);
+        ESP_LOGI(BLE_TAG, "VENT received message: %s, as int: %i", received_str, received_open_percentage);
+
+        
+        int desired_motor_pwm = ((MOTOR_OPEN_PWM-MOTOR_CLOSE_PWM)/100.0f)*received_open_percentage + MOTOR_CLOSE_PWM;
+
+        set_motor_duty(desired_motor_pwm);
+
     }
     return 0;
 }
@@ -173,7 +205,7 @@ void ble_server_task_entry()
     nvs_flash_init();                          // 1 - Initialize NVS flash using
     esp_nimble_hci_init();                     // 2 - Initialize ESP controller
     nimble_port_init();                        // 3 - Initialize the host stack
-    ble_svc_gap_device_name_set("BLE-Server"); // 4 - Initialize NimBLE configuration - server name
+    ble_svc_gap_device_name_set("BLE-Server2"); // 4 - Initialize NimBLE configuration - server name
     ble_svc_gap_init();                        // 4 - Initialize NimBLE configuration - gap service
     ble_svc_gatt_init();                       // 4 - Initialize NimBLE configuration - gatt service
     ble_gatts_count_cfg(gatt_svcs);            // 4 - Initialize NimBLE configuration - config gatt services
@@ -181,7 +213,20 @@ void ble_server_task_entry()
     ble_hs_cfg.sync_cb = ble_app_on_sync;      // 5 - Initialize application
     nimble_port_freertos_init(host_task);      // 6 - Run the thread
 
+
+    while(1){
+        if (your_read_attr_handle == 0) vTaskDelay(1000);
+        else {
+            break;
+        }
+    }
+
     while (1) {
-        ;
+        ESP_LOGI(BLE_TAG, "BLE connected to device. Starting to transmit temperature...");
+        
+        send_temperature_update(get_latest_avg_temperature());
+
+        vTaskDelay(500);
+
     }
 }
