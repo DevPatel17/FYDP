@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var ventStore: VentStore
     @State private var showingResetConfirmation = false
+    @State private var showingPlaceholderConfirmation = false
     
     var body: some View {
         NavigationView {
@@ -28,17 +29,20 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Data Management")) {
-                    // Button to clear all vents
+                    Button(action: {
+                        showingPlaceholderConfirmation = true
+                    }) {
+
+                            Text("Add Placeholder Vents")
+                            .foregroundColor(.blue)
+                    }
                     Button(action: {
                         showingResetConfirmation = true
                     }) {
-                        HStack {
-                            Image(systemName: "trash")
-                                .foregroundColor(.red)
                             Text("Clear All Vents")
                                 .foregroundColor(.red)
-                        }
                     }
+                    
                 }
                 
                 Section(header: Text("About")) {
@@ -63,6 +67,11 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("This will remove all your vents. This action cannot be undone.")
+            }.alert("Add Placeholders?", isPresented: $showingPlaceholderConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Add Placeholder Vents") {
+                    ventStore.addPlaceholderVents()
+                }
             }
         }
     }

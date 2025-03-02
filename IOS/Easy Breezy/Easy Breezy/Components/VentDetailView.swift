@@ -35,6 +35,32 @@ struct VentDetailView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
+                    .onChange(of: vent.isManualMode) { _, isManual in
+                        if isManual {
+                            // Switching to manual mode
+                            localManualPosition = vent.manualPosition
+                            
+                            // Get position value
+                            let positionValue = Int(vent.manualPosition) ?? 0
+                            
+                            // Ensure vent is open if position > 0
+                            if positionValue > 0 {
+                                vent.isOpen = true
+                            }
+                            
+                            // Send a packet to update the system mode
+                            onSendPacket(3, String(vent.id) + "." + vent.manualPosition)
+                        } else {
+                            // Switching to temperature mode
+                            // Set vent to open state
+                            vent.isOpen = true
+                            
+                            // Send target temperature to system
+                            if let temp = Float(vent.targetTemp) {
+                                onSendPacket(2, String(temp))
+                            }
+                        }
+                    }
 
                     if vent.isManualMode {
                         ManualControlView(
@@ -43,8 +69,11 @@ struct VentDetailView: View {
                                 // Update the model's manual position
                                 vent.manualPosition = String(position.split(separator: ".").last ?? "0")
                                 
-                                // Update isOpen based on position value
+                                // Get position value
                                 let positionValue = Int(vent.manualPosition) ?? 0
+                                
+                                // Update isOpen based on position value
+                                // Only set to closed if explicitly set to 0
                                 vent.isOpen = positionValue > 0
                                 
                                 // Send a manual control packet (type 3)
@@ -58,6 +87,10 @@ struct VentDetailView: View {
                             onTemperatureSet: { temp in
                                 // Update target temperature in the vent
                                 vent.targetTemp = String(format: "%.1f", temp)
+                                
+                                // Set vent to open state when sending temperature
+                                vent.isOpen = true
+                                
                                 // Send a temperature control packet (type 2)
                                 onSendPacket(2, String(temp))
                             }
@@ -66,7 +99,17 @@ struct VentDetailView: View {
                 }
                 .padding(.horizontal)
             }
-            .background(Color(hex: "1C1C1E"))
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(hex: "0F2942"),  // Deep blue that matches the accent
+                        Color(hex: "071A2F")   // Very dark blue-green
+                    ]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .edgesIgnoringSafeArea(.all)
+            )
             .toolbar {
                 ToolbarItem(placement: .automatic) {
                     Button("Done") {
@@ -80,12 +123,6 @@ struct VentDetailView: View {
                 
                 // Initialize manual position from stored value
                 localManualPosition = vent.manualPosition
-            }
-            // When manual mode changes, update the local position
-            .onChange(of: vent.isManualMode) { _, isManual in
-                if isManual {
-                    localManualPosition = vent.manualPosition
-                }
             }
         }
     }

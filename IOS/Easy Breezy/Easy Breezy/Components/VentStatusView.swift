@@ -38,5 +38,16 @@ struct VentStatusView: View {
         .padding()
         .background(Color.white.opacity(0.1))
         .cornerRadius(16)
+        .background(
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(hex: "0F2942"),  // Deep blue that matches the accent
+                    Color(hex: "071A2F")   // Very dark blue-green
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .edgesIgnoringSafeArea(.all)
+        )
     }
 }

@@ -13,7 +13,7 @@ struct ContentView: View {
 
     func sendPacket(pktType: Int, value: String) {
         let connection = NWConnection(
-            host: "10.31.94.136",
+            host: "172.20.10.2",
             port: 5001,
             using: .udp
         )
@@ -113,7 +113,18 @@ struct ContentView: View {
             }
             .padding()
         }
-        .background(Color(hex: "1C1C1E"))
+        .background(
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(hex: "0F2942"),  // Deep blue that matches the accent
+                    Color(hex: "071A2F")   // Very dark blue-green
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .edgesIgnoringSafeArea(.all)
+        )
+
         .sheet(isPresented: $showingAddVent) {
             AddVentView(ventStore: ventStore, onSendPacket: sendPacket)
         }
