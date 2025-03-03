@@ -14,10 +14,9 @@
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include "GLOBAL_DEFINES.h"
 // #include "motor.c"
 
-#define MOTOR_CLOSE_PWM 170
-#define MOTOR_OPEN_PWM 1050
 
 char *BLE_TAG = "BLE_SERVER";
 uint8_t ble_addr_type;
@@ -28,9 +27,34 @@ struct os_mbuf *om;
 int rc = 0;
 int VentID = 0;
 
-void set_motor_duty(int duty);
+void set_motor_position(int duty);
 
 float get_latest_avg_temperature();
+
+/**
+ * Cleans up BLE connection resources and prepares for reconnection
+ * Called when a client disconnects from the server
+ */
+void clean_up_ble_and_reset(void) {
+    ESP_LOGI(BLE_TAG, "Cleaning up BLE connection and preparing to reset");
+    
+    // Reset connection handle
+    g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    
+    // Free any pending message buffers if they exist
+    if (om != NULL) {
+        os_mbuf_free_chain(om);
+        om = NULL;
+    }
+    
+    // Reset connection state variables
+    rc = 0;
+    
+    // Restart advertising to accept new connections
+    ble_app_advertise();
+    
+    ESP_LOGI(BLE_TAG, "BLE cleanup complete, ready for new connections");
+}
 
 
 void send_temperature_update(float temp) {
@@ -92,10 +116,7 @@ static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_g
         int received_open_percentage = (int) atof(received_str);
         ESP_LOGI(BLE_TAG, "VENT received message: %s, as int: %i", received_str, received_open_percentage);
 
-        
-        int desired_motor_pwm = ((MOTOR_OPEN_PWM-MOTOR_CLOSE_PWM)/100.0f)*received_open_percentage + MOTOR_CLOSE_PWM;
-
-        set_motor_duty(desired_motor_pwm);
+        set_motor_position(received_open_percentage);
 
     }
     return 0;
@@ -142,6 +163,9 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
         // Handle subscription change
         if (event->subscribe.attr_handle == your_read_attr_handle) {
             printf("Notifications %s\n", event->subscribe.cur_notify ? "enabled" : "disabled");
+
+            // clean up ble and get ready to retransmitt
+            if (event->subscribe.cur_notify == 0) clean_up_ble_and_reset();
         }
         break;
     // Advertise if connected
@@ -156,6 +180,12 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_ADV_COMPLETE:
         ESP_LOGI("GAP", "BLE GAP EVENT");
         ble_app_advertise();
+        break;
+    // Handle disconnection event
+    case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(BLE_TAG, "BLE GAP EVENT DISCONNECT (reason: %d)", event->disconnect.reason);
+        // Call clean-up function
+        clean_up_ble_and_reset();
         break;
     default:
         break;
@@ -205,7 +235,7 @@ void ble_server_task_entry()
     nvs_flash_init();                          // 1 - Initialize NVS flash using
     esp_nimble_hci_init();                     // 2 - Initialize ESP controller
     nimble_port_init();                        // 3 - Initialize the host stack
-    ble_svc_gap_device_name_set("BLE-Server2"); // 4 - Initialize NimBLE configuration - server name
+    ble_svc_gap_device_name_set(VENT_NAME); // 4 - Initialize NimBLE configuration - server name
     ble_svc_gap_init();                        // 4 - Initialize NimBLE configuration - gap service
     ble_svc_gatt_init();                       // 4 - Initialize NimBLE configuration - gatt service
     ble_gatts_count_cfg(gatt_svcs);            // 4 - Initialize NimBLE configuration - config gatt services

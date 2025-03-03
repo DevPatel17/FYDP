@@ -11,6 +11,16 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Temperature control method configuration
+# Set to 'PID' or 'HYSTERESIS' to choose the temperature control method
+TEMPERATURE_CONTROL_METHOD = 'PID'  # Options: 'PID', 'HYSTERESIS'
+
+# Hysteresis control configuration
+HYSTERESIS_THRESHOLD_HIGH = 1.0  # Degrees above desired temperature to close vent
+HYSTERESIS_THRESHOLD_LOW = 0.5   # Degrees below desired temperature to open vent
+HYSTERESIS_MIN_POSITION = 0      # Minimum vent position (closed)
+HYSTERESIS_MAX_POSITION = 100    # Maximum vent position (open)
+
 # The device name we're looking for (same as in your ESP32 code)
 DEVICE_NAME1 = "BLE-Server"
 DEVICE_NAME2 = "BLE-Server-2"
@@ -82,7 +92,7 @@ async def run_ble_connection(client, VentID, phone_connection):
                         value_str = f"{vent_id}.{temp}"
                         phone_connection.send_packet(2, value_str) 
                         
-                        #TODO Put new temperature into PID controller here
+                        # Get the vent instance
                         vent = vent_system.get_vent_cover(vent_id)
                         
                         if float(temp) < float(vent.temperature) + 0.1 and float(temp) > float(vent.temperature) - 0.1:
@@ -91,9 +101,17 @@ async def run_ble_connection(client, VentID, phone_connection):
                             temp_change = True
                         
                         if(vent.user_forced == True and temp_change == True):
-                            new_pos = int(vent.PIDController.compute(temp, vent.desired_temp))
-                            logger.info(f"Sending new vent position: {new_pos}")
-                            send_vent_position(vent, str(new_pos))
+                            # Choose temperature control method based on global configuration
+                            if TEMPERATURE_CONTROL_METHOD == 'PID':
+                                # Use existing PID controller
+                                new_pos = int(vent.PIDController.compute(temp, vent.desired_temp))
+                                logger.info(f"PID Controller - New vent position: {new_pos}")
+                                send_vent_position(vent, str(new_pos))
+                            elif TEMPERATURE_CONTROL_METHOD == 'HYSTERESIS':
+                                # Use hysteresis controller
+                                new_pos = compute_hysteresis_position(temp, vent.desired_temp, vent.vent_cover_status)
+                                logger.info(f"Hysteresis Controller - New vent position: {new_pos}")
+                                send_vent_position(vent, str(new_pos))
                         
                         vent.temperature = temp
                     elif "ID:" in message and "motor:" in message:
@@ -132,6 +150,29 @@ async def run_ble_connection(client, VentID, phone_connection):
             await client.disconnect()
         except:
             pass
+
+def compute_hysteresis_position(current_temp, desired_temp, current_position):
+    """
+    Compute vent position using hysteresis control.
+    
+    Args:
+        current_temp (float): Current temperature reading
+        desired_temp (float): Desired target temperature
+        current_position (int): Current vent position
+        
+    Returns:
+        int: New vent position (0-100)
+    """
+    # For cooling mode: open vent when too warm, close when cool enough
+    if current_temp > (desired_temp + HYSTERESIS_THRESHOLD_HIGH):
+        # Temperature is too high, open vent to allow cooling
+        return HYSTERESIS_MAX_POSITION
+    elif current_temp < (desired_temp - HYSTERESIS_THRESHOLD_LOW):
+        # Temperature is below target, close vent to reduce cooling
+        return HYSTERESIS_MIN_POSITION
+    else:
+        # Within acceptable range, maintain current position
+        return current_position
 
 def ble_connection_thread(client, VentID, phone_connection):
     """
@@ -509,6 +550,7 @@ class VentCommunicator:
     def start(self):
         """Start the communication threads"""
         print('Starting UDP server...')
+        print(f'Temperature control method: {TEMPERATURE_CONTROL_METHOD}')
         
         # Print IP address information
         try:
