@@ -92,7 +92,7 @@ struct VentDetailView: View {
                                 vent.isOpen = true
                                 
                                 // Send a temperature control packet (type 2)
-                                onSendPacket(2, String(temp))
+                                onSendPacket(2, String(vent.id) + "." + String(temp))
                             }
                         )
                     }

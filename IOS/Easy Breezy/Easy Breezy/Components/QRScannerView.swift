@@ -64,13 +64,18 @@ struct QRScannerView: View {
                             Text("Start Scanning")
                                 .font(.headline)
                                 .foregroundColor(.white)
-                                .padding(.top, 8)
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color(hex: "86B5A5"))
+                        .background(LinearGradient(
+                            colors: [
+                                Color(hex: "3498db").opacity(0.8),  // Blue
+                                Color(hex: "2ac9de").opacity(0.9)   // Cyan
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ))
                         .cornerRadius(12)
-                        .padding(.horizontal)
                     }
                 }
                 

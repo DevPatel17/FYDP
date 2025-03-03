@@ -13,7 +13,7 @@ struct ContentView: View {
 
     func sendPacket(pktType: Int, value: String) {
         let connection = NWConnection(
-            host: "172.20.10.2",
+            host: "10.31.94.136",
             port: 5001,
             using: .udp
         )
@@ -143,7 +143,7 @@ struct ContentView: View {
                         .foregroundColor(.white)
                 }
 
-                Text("14 Sage Street")
+                Text("256 Phillip Street")
                     .font(.subheadline)
                     .foregroundColor(.gray)
             }
