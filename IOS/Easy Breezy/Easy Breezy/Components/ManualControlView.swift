@@ -32,7 +32,10 @@ struct ManualControlView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(
                             LinearGradient(
-                                colors: [Color(hex: "86B5A5"), Color(hex: "86B5A5").opacity(0.7)],
+                                colors: [
+                                    Color(hex: "3498db").opacity(0.8),  // Blue
+                                    Color(hex: "2ac9de").opacity(0.9)   // Cyan
+                                ],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )

@@ -1,9 +1,41 @@
-/**
- * ADC_TO_TEMP_LUT - ADC to Temperature (°C) lookup table
- * Generated for a 12-bit ADC with a 10K thermistor (B=3950)
+/*
+ * SPDX-FileCopyrightText: 2022-2023 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 
-const float ADC_TO_TEMP_LUT[4096] = {
+ #include "esp_log.h"
+ #include "driver/mcpwm_prelude.h"
+ #include <driver/ledc.h>
+ #include "esp_err.h"
+ #include <stdio.h>
+ #include "esp_vfs_dev.h"
+ #include "driver/uart.h"
+ #include "sdkconfig.h"
+ #include "esp_console.h"
+ #include "driver/adc.h"
+ #include "esp_adc_cal.h"
+
+//  #include "lut.h"
+ 
+ 
+ #define GPIO_INPUT_IO_34     CONFIG_GPIO_INPUT_34
+ #define GPIO_INPUT_PIN_SEL  ((1ULL<<GPIO_INPUT_IO_34))
+
+ #define DEFAULT_VREF    1100        // Use adc_vref_to_gpio() to get a better estimate
+#define NO_OF_SAMPLES   64          // Multisampling
+
+// extern float ADC_TO_TEMP_LUT[4096];
+
+static esp_adc_cal_characteristics_t *adc_chars;
+static const adc_channel_t channel = ADC_CHANNEL_4;     // GPIO32 if ADC1
+static const adc_bits_width_t width = ADC_WIDTH_BIT_12;
+static const adc_atten_t atten = ADC_ATTEN_DB_11;
+static const adc_unit_t unit = ADC_UNIT_1;
+ 
+ static const char *TEMP_SENSE_TAG = "Temp_Sense";
+ 
+ const float ADC_TO_TEMP_LUT[4096] = {
     -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, 
     -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, 
     -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, -50.00f, 
@@ -517,3 +549,86 @@ const float ADC_TO_TEMP_LUT[4096] = {
     150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 
     150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 150.00f, 150.00f
 };
+
+ // Define the reference voltage (in volts)
+#define V_REF 3.3
+
+
+// ring buffer code
+#define RING_BUFF_SIZE 5
+
+struct Temp_Data {
+    float latest_temps[RING_BUFF_SIZE];
+    float latest_avg_temp;
+    int idx;
+};
+
+struct Temp_Data temp_data;
+
+void insert_temp(struct Temp_Data *temp_data, float value) {
+
+    temp_data->latest_temps[temp_data->idx++] = value;
+
+    if (temp_data->idx >= RING_BUFF_SIZE) temp_data->idx = 0;
+
+    float sum = 0;
+    for (int i = 0; i < RING_BUFF_SIZE; i++) {
+        sum += temp_data->latest_temps[i];
+    }
+
+    temp_data->latest_avg_temp = (sum / RING_BUFF_SIZE);
+}
+
+float get_latest_avg_temperature() {
+    return temp_data.latest_avg_temp;
+}
+ 
+
+// Function to convert ADC value to voltage
+double adcToVoltage(uint16_t adcValue, uint16_t adcMaxValue) {
+    return (adcValue / (double)adcMaxValue) * V_REF;
+}
+
+uint16_t voltageToADC(double voltage, uint16_t adcMaxValue) {
+    return (uint16_t)((voltage / V_REF) * adcMaxValue);
+}
+
+ 
+ // Function declarations
+ void temp_sense_task_entry(void *pvParameter);
+
+ void adc_init() {
+    adc1_config_width(width);
+    adc1_config_channel_atten(channel, atten);
+    
+    // Characterize ADC
+    adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
+    esp_adc_cal_characterize(unit, atten, width, DEFAULT_VREF, adc_chars);
+}
+
+ void temp_sense_task_entry(void *pvParameter)
+ {
+
+    adc_init();
+ 
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000)); // delay to prevent task hogging
+
+
+        uint32_t raw_adc =  adc1_get_raw(ADC1_CHANNEL_4);
+
+        double voltage = adcToVoltage(raw_adc, 4095U);
+
+        // slightly pad the voltage and adc
+        if (voltage < 2.65f) voltage += 0.2f;
+
+        uint32_t padded_adc = voltageToADC(voltage, 4095U);
+
+
+        float temp = ADC_TO_TEMP_LUT[padded_adc];
+        insert_temp(&temp_data, temp);
+
+        ESP_LOGI(TEMP_SENSE_TAG, "raw_adc read %lu, padded_adc read %lu, voltage: %.5f, temp: %f", raw_adc, padded_adc, voltage, temp);
+
+    }
+ }

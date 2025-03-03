@@ -135,7 +135,17 @@ struct AddVentView: View {
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(hex: "1C1C1E"))
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(hex: "0F2942"),  // Deep blue that matches the accent
+                        Color(hex: "071A2F")   // Very dark blue-green
+                    ]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .edgesIgnoringSafeArea(.all)
+            )
             .navigationBarItems(trailing: Button("Cancel") {
                 dismiss()
             })

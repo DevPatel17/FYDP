@@ -5,6 +5,7 @@
 #include "sdkconfig.h"
 #include "threads/motor.c"
 #include "threads/ble_server.c"
+#include "threads/temperature_sense.c"
 
 #define PROMPT_STR CONFIG_IDF_TARGET
 #define TASK_PRIO_3         3
@@ -25,6 +26,9 @@ void app_main(void)
 
     // Create the ble server task
     xTaskCreate(&ble_server_task_entry, "ble_server_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
+
+    // Create temp sense task
+    xTaskCreate(&temp_sense_task_entry, "temp_sense_task", 4096, NULL, NULL, NULL);
 }
 
 esp_err_t configure_stdin_stdout(void)

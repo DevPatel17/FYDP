@@ -83,7 +83,7 @@ class VentStore: ObservableObject {
         }
     }
     
-    private func addPlaceholderVents() {
+    func addPlaceholderVents() {
         // Clear any existing vents
         vents = []
         
@@ -176,7 +176,7 @@ class VentStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: saveKey)
         UserDefaults.standard.removeObject(forKey: "VentsEverSaved")
         vents = []
-        addPlaceholderVents()
+//        addPlaceholderVents()
         objectWillChange.send()
     }
 }
