@@ -15,6 +15,7 @@
  #include "esp_console.h"
  #include "driver/adc.h"
  #include "esp_adc_cal.h"
+ #include "GLOBAL_DEFINES.h"
 
 //  #include "lut.h"
  
@@ -620,7 +621,7 @@ uint16_t voltageToADC(double voltage, uint16_t adcMaxValue) {
         double voltage = adcToVoltage(raw_adc, 4095U);
 
         // slightly pad the voltage and adc
-        if (voltage < 2.65f) voltage += 0.2f;
+        if (voltage < 2.65f) voltage += VOLTAGE_PADDING;
 
         uint32_t padded_adc = voltageToADC(voltage, 4095U);
 
