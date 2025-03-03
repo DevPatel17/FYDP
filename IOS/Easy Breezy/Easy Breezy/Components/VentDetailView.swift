@@ -57,7 +57,7 @@ struct VentDetailView: View {
                             
                             // Send target temperature to system
                             if let temp = Float(vent.targetTemp) {
-                                onSendPacket(2, String(temp))
+                                onSendPacket(2, String(vent.id) + "." + String(temp))
                             }
                         }
                     }

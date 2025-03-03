@@ -386,6 +386,22 @@ def send_vent_position(vent, position):
     # Create a future to execute the async BLE write operation
     async def send_position_command(client, position):
         try:
+            # First check if the connection is still active
+            if not client.is_connected:
+                logger.info(f"BLE connection to vent {vent.vent_id} is not active, attempting to reconnect...")
+                try:
+                    await client.connect()
+                    logger.info(f"Successfully reconnected to vent {vent.vent_id}")
+                except Exception as e:
+                    logger.error(f"Failed to reconnect to vent {vent.vent_id}: {str(e)}")
+                    # Mark the connection as lost since reconnect failed
+                    vent.disconnect()
+                    return False
+            # Verify the client has completed service discovery
+            if not client.services:
+                logger.info(f"Service discovery for vent {vent.vent_id} not yet complete, running now...")
+                await client.get_services()
+                logger.info(f"Service discovery completed for vent {vent.vent_id}")
             # Encode the position command
             message = position.encode()
             await client.write_gatt_char(WRITE_UUID, message)
