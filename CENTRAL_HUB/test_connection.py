@@ -23,26 +23,26 @@ READ_CHAR_UUID = "0000fef4-0000-1000-8000-00805f9b34fb"  # Read characteristic U
 # Create a global event loop to be shared across threads
 loop = asyncio.new_event_loop()
 
-async def find_device():
+async def find_device(device_name):
     """Scan for the ESP32 device"""
-    logger.info(f"Scanning for {DEVICE_NAME1}...")
+    logger.info(f"Scanning for {device_name}...")
     
     while True:
         devices = await BleakScanner.discover()
         for device in devices:
-            if device.name == DEVICE_NAME1 or device.name == DEVICE_NAME2:
+            if device.name == device_name:
                 logger.info(f"Found {device.name}: {device.address}")
                 return device
         logger.info("Device not found, scanning again...")
         await asyncio.sleep(1)
 
-async def connect_to_ble_client(VentID):
+async def connect_to_ble_client(device_name):
     """
     Connects to the BLE device and returns the client object
     without setting up notifications or sending messages
     """
     try:
-        device = await find_device()
+        device = await find_device(device_name)
         client = BleakClient(device.address)
         await client.connect()
         logger.info(f"Connected to {device.name}")
@@ -82,7 +82,33 @@ async def run_ble_connection(client, VentID, phone_connection):
                         value_str = f"{vent_id}.{temp}"
                         phone_connection.send_packet(2, value_str) 
                         
-                        #TODO Put new temperature into PID controller here                  
+                        #TODO Put new temperature into PID controller here
+                        vent = vent_system.get_vent_cover(vent_id)
+                        
+                        if float(temp) < float(vent.temperature) + 0.1 and float(temp) > float(vent.temperature) - 0.1:
+                            temp_change = False
+                        else:
+                            temp_change = True
+                        
+                        if(vent.user_forced == True and temp_change == True):
+                            new_pos = int(vent.PIDController.compute(temp, vent.desired_temp))
+                            logger.info(f"Sending new vent position: {new_pos}")
+                            send_vent_position(vent, str(new_pos))
+                        
+                        vent.temperature = temp
+                    elif "ID:" in message and "motor:" in message:
+                        parts = message.split(',')
+                        vent_id = int(parts[0].split(':')[1].strip())
+                        motor_pos = float(parts[1].split(':')[1].strip())
+                        
+                        logger.info(f"Parsed - Vent ID: {vent_id}, Motor position: {motor_pos}")
+                        
+                        # Send type 3 packet with combined vent ID and motor position
+                        value_str = f"{vent_id}.motor{motor_pos}"
+                        phone_connection.send_packet(3, value_str) 
+                        vent.user_forced == False
+                        
+                                        
                 except Exception as e:
                     logger.error(f"Error parsing message: {e}")
 
@@ -94,14 +120,6 @@ async def run_ble_connection(client, VentID, phone_connection):
         message = f"Connected, Vent ID: {VentID}".encode()
         await client.write_gatt_char(WRITE_UUID, message)
         logger.info(f"Sent message: {message.decode()}")
-        
-        # Send sequence of messages with delays
-        # messages = ["1", "0", "1"]
-        # for msg in messages:
-        #     await asyncio.sleep(3)
-        #     message_to_send = msg.encode()
-        #     await client.write_gatt_char(WRITE_UUID, message_to_send)
-        #     logger.info(f"Sent message: {message_to_send.decode()}")
         
         # Keep the connection alive
         while True:
@@ -136,6 +154,100 @@ def ble_connection_thread(client, VentID, phone_connection):
     except Exception as e:
         logger.error(f"Error in BLE connection thread: {str(e)}")
 
+class VentPIDController:
+    """
+    A PID controller for regulating vent opening based on temperature difference.
+    
+    The controller takes current and desired temperature as inputs and
+    outputs a value between 0-100, where:
+    - 0 means the vent should be closed (temperatures match)
+    - 100 means the vent should be fully open (large temperature difference)
+    """
+    
+    def __init__(self, kp=1.5, ki=0.5, kd=0.05, min_output=0, max_output=100):
+        """
+        Initialize the PID controller with tuning parameters.
+        
+        Args:
+            kp (float): Proportional gain coefficient
+            ki (float): Integral gain coefficient  
+            kd (float): Derivative gain coefficient
+            min_output (float): Minimum output value (default: 0)
+            max_output (float): Maximum output value (default: 100)
+        """
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.min_output = min_output
+        self.max_output = max_output
+        
+        # PID state variables
+        self.integral = 0
+        self.previous_error = 0
+        self.last_time = None
+        
+    def reset(self):
+        """Reset the controller's internal state."""
+        self.integral = 0
+        self.previous_error = 0
+        self.last_time = None
+        
+    def compute(self, current_temp, desired_temp, dt=1.0):
+        """
+        Compute the control output based on temperature difference.
+        
+        Args:
+            current_temp (float): Current temperature reading
+            desired_temp (float): Desired target temperature
+            dt (float): Time delta since last update in seconds (default: 1.0)
+            
+        Returns:
+            float: Control output in range [min_output, max_output]
+        """
+        # For cooling: error is positive when current temp > desired temp
+        # For heating: error would be reversed
+        error = current_temp - desired_temp
+        
+        # Proportional term
+        proportional = self.kp * error
+        
+        # Integral term - accumulates over time
+        self.integral += error * dt
+        integral_term = self.ki * self.integral
+        
+        # Derivative term - rate of change
+        derivative = (error - self.previous_error) / dt if dt > 0 else 0
+        derivative_term = self.kd * derivative
+        
+        # Save current error for next iteration
+        self.previous_error = error
+        
+        # Calculate PID output
+        output = proportional + integral_term + derivative_term
+        
+        # If we're in cooling mode, a positive output means open the vent
+        # If we're in heating mode, we would handle direction differently
+        
+        # Clamp the output to the allowed range
+        output = max(self.min_output, min(self.max_output, output))
+        
+        return output
+    
+    def update_tuning(self, kp=None, ki=None, kd=None):
+        """
+        Update the PID tuning parameters.
+        
+        Args:
+            kp (float, optional): New proportional gain
+            ki (float, optional): New integral gain
+            kd (float, optional): New derivative gain
+        """
+        if kp is not None:
+            self.kp = kp
+        if ki is not None:
+            self.ki = ki
+        if kd is not None:
+            self.kd = kd
 
 class VentCover:
     # Class variable to keep track of the next available ventID
@@ -143,10 +255,12 @@ class VentCover:
     
     def __init__(self, temperature=0.0, vent_cover_status=0, user_forced=False, vent_id=None):
         self.temperature = float(temperature)
+        self.desired_temp = float(temperature)
         self.vent_cover_status = int(vent_cover_status)
         self.user_forced = bool(user_forced)
         self.ble_connection = None  # Default to no connection
         self.ble_thread = None
+        self.PIDController = VentPIDController()
         # If no vent_id provided, assign the next available one
         if vent_id is None:
             self.vent_id = VentCover.next_vent_id
@@ -222,6 +336,40 @@ class VentCoverSystem:
 
 vent_system = VentCoverSystem()
 
+def send_vent_position(vent, position):
+    """Send a position command to a vent over BLE"""
+    if not vent.is_connected():
+        print(f"Cannot send position to vent {vent.vent_id}: not connected")
+        return
+        
+    # Create a future to execute the async BLE write operation
+    async def send_position_command(client, position):
+        try:
+            # Encode the position command
+            message = position.encode()
+            await client.write_gatt_char(WRITE_UUID, message)
+            logger.info(f"Sent position command to vent {vent.vent_id}: {position}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending position to vent {vent.vent_id}: {str(e)}")
+            return False
+            
+    # Submit the task to the event loop
+    future = asyncio.run_coroutine_threadsafe(
+        send_position_command(vent.get_ble_connection(), position),
+        loop
+    )
+    
+    try:
+        # Wait for the operation to complete with a timeout
+        result = future.result(timeout=5.0)
+        if result:
+            print(f"Successfully sent position {position} to vent {vent.vent_id}")
+        else:
+            print(f"Failed to send position to vent {vent.vent_id}")
+    except Exception as e:
+        print(f"Error in send_vent_position: {str(e)}")
+
 class VentCommunicator:
     def __init__(self):
         # Socket for receiving
@@ -238,40 +386,6 @@ class VentCommunicator:
         # Flag for stopping the threads
         self.running = True
     
-    def send_vent_position(self, vent, position):
-        """Send a position command to a vent over BLE"""
-        if not vent.is_connected():
-            print(f"Cannot send position to vent {vent.vent_id}: not connected")
-            return
-            
-        # Create a future to execute the async BLE write operation
-        async def send_position_command(client, position):
-            try:
-                # Encode the position command
-                message = position.encode()
-                await client.write_gatt_char(WRITE_UUID, message)
-                logger.info(f"Sent position command to vent {vent.vent_id}: {position}")
-                return True
-            except Exception as e:
-                logger.error(f"Error sending position to vent {vent.vent_id}: {str(e)}")
-                return False
-                
-        # Submit the task to the event loop
-        future = asyncio.run_coroutine_threadsafe(
-            send_position_command(vent.get_ble_connection(), position),
-            loop
-        )
-        
-        try:
-            # Wait for the operation to complete with a timeout
-            result = future.result(timeout=5.0)
-            if result:
-                print(f"Successfully sent position {position} to vent {vent.vent_id}")
-            else:
-                print(f"Failed to send position to vent {vent.vent_id}")
-        except Exception as e:
-            print(f"Error in send_vent_position: {str(e)}")
-
     def send_packet(self, pkt_type, value):
         """Send a packet to the phone"""
         if self.phone_address is None:
@@ -332,9 +446,10 @@ class VentCommunicator:
                             
                             # Get the vent cover and check if it has a BLE connection
                             vent = vent_system.get_vent_cover(vent_id)
+                            vent.user_forced = False
                             if vent and vent.is_connected():
                                 # Send vent position command to the vent via BLE
-                                self.send_vent_position(vent, vent_position)
+                                send_vent_position(vent, vent_position)
                             else:
                                 print(f"Error: Vent {vent_id} not found or not connected")
                         else:
@@ -350,7 +465,7 @@ class VentCommunicator:
                     
                     try:
                         # Connect to BLE client using the async loop
-                        future = asyncio.run_coroutine_threadsafe(connect_to_ble_client(VentID), loop)
+                        future = asyncio.run_coroutine_threadsafe(connect_to_ble_client(value_str), loop)
                         client, device = future.result()  # Wait for connection
                         
                         if client:
@@ -369,6 +484,20 @@ class VentCommunicator:
                         logger.info("Script terminated by user")
                     except Exception as e:
                         logger.error(f"Unexpected error: {str(e)}")
+                
+                elif pkt_type == 2:
+                    print("Received temperature mode request...")
+                    
+                    if '.' in value_str:
+                        parts = value_str.split('.')
+                        vent_id = int(parts[0])
+                        temperature = parts[1]
+                    
+                    vent = vent_system.get_vent_cover(vent_id)
+                    vent.user_forced = True
+                    vent.desired_temp = float(temperature)
+                    
+                    
                         
             except socket.timeout:
                 # This is normal, just continue the loop
