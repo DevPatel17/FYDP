@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Temperature control method configuration
 # Set to 'PID' or 'HYSTERESIS' to choose the temperature control method
-TEMPERATURE_CONTROL_METHOD = 'PID'  # Options: 'PID', 'HYSTERESIS'
+TEMPERATURE_CONTROL_METHOD = 'HYSTERESIS'  # Options: 'PID', 'HYSTERESIS'
 
 # Hysteresis control configuration
 HYSTERESIS_THRESHOLD_HIGH = 1.0  # Degrees above desired temperature to close vent
@@ -110,9 +110,10 @@ async def run_ble_connection(client, VentID, phone_connection):
                             elif TEMPERATURE_CONTROL_METHOD == 'HYSTERESIS':
                                 # Use hysteresis controller
                                 new_pos = compute_hysteresis_position(temp, vent.desired_temp, vent.vent_cover_status)
-                                logger.info(f"Hysteresis Controller - New vent position: {new_pos}")
-                                send_vent_position(vent, str(new_pos))
-                        
+                                if new_pos != vent.pos:
+                                    send_vent_position(vent, str(new_pos))
+                                    vent.pos = new_pos
+                                    logger.info(f"Hysteresis Controller - New vent position: {new_pos}")
                         vent.temperature = temp
                     elif "ID:" in message and "motor:" in message:
                         parts = message.split(',')
@@ -147,7 +148,8 @@ async def run_ble_connection(client, VentID, phone_connection):
         logger.error(f"Error in BLE connection: {str(e)}")
     finally:
         try:
-            await client.disconnect()
+            print("************************ run_ble_conn: FAILURE -> tried calling client.disconnect().")
+            # await client.disconnect()
         except:
             pass
 
@@ -166,10 +168,10 @@ def compute_hysteresis_position(current_temp, desired_temp, current_position):
     # For cooling mode: open vent when too warm, close when cool enough
     if current_temp > (desired_temp + HYSTERESIS_THRESHOLD_HIGH):
         # Temperature is too high, open vent to allow cooling
-        return HYSTERESIS_MAX_POSITION
+        return HYSTERESIS_MIN_POSITION
     elif current_temp < (desired_temp - HYSTERESIS_THRESHOLD_LOW):
         # Temperature is below target, close vent to reduce cooling
-        return HYSTERESIS_MIN_POSITION
+        return HYSTERESIS_MAX_POSITION
     else:
         # Within acceptable range, maintain current position
         return current_position
@@ -302,6 +304,7 @@ class VentCover:
         self.ble_connection = None  # Default to no connection
         self.ble_thread = None
         self.PIDController = VentPIDController()
+        self.pos = -1
         # If no vent_id provided, assign the next available one
         if vent_id is None:
             self.vent_id = VentCover.next_vent_id
@@ -386,22 +389,6 @@ def send_vent_position(vent, position):
     # Create a future to execute the async BLE write operation
     async def send_position_command(client, position):
         try:
-            # First check if the connection is still active
-            if not client.is_connected:
-                logger.info(f"BLE connection to vent {vent.vent_id} is not active, attempting to reconnect...")
-                try:
-                    await client.connect()
-                    logger.info(f"Successfully reconnected to vent {vent.vent_id}")
-                except Exception as e:
-                    logger.error(f"Failed to reconnect to vent {vent.vent_id}: {str(e)}")
-                    # Mark the connection as lost since reconnect failed
-                    vent.disconnect()
-                    return False
-            # Verify the client has completed service discovery
-            if not client.services:
-                logger.info(f"Service discovery for vent {vent.vent_id} not yet complete, running now...")
-                await client.get_services()
-                logger.info(f"Service discovery completed for vent {vent.vent_id}")
             # Encode the position command
             message = position.encode()
             await client.write_gatt_char(WRITE_UUID, message)
@@ -551,8 +538,12 @@ class VentCommunicator:
                         temperature = parts[1]
                     
                     vent = vent_system.get_vent_cover(vent_id)
-                    vent.user_forced = True
-                    vent.desired_temp = float(temperature)
+
+                    if vent is not None: 
+                        vent.user_forced = True
+                        vent.desired_temp = float(temperature)
+                    else:
+                        print("*************** receive_packet(): VENT RET AS NONE")
                     
                     
                         
