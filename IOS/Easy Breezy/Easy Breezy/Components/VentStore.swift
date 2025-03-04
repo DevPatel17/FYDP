@@ -179,4 +179,11 @@ class VentStore: ObservableObject {
 //        addPlaceholderVents()
         objectWillChange.send()
     }
+    
+    func removeVent(id: Int) {
+        print("Removing vent with ID: \(id)")
+        vents.removeAll { $0.id == id }
+        saveVents()
+        objectWillChange.send()
+    }
 }

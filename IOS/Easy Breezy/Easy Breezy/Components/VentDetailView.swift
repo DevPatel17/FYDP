@@ -12,7 +12,7 @@ struct VentDetailView: View {
     @Binding var receivedPktType: String
     @Binding var receivedTemperature: String
     let onSendPacket: (Int, String) -> Void
-
+    let onDelete: (Vent) -> Void
     @Environment(\.dismiss) var dismiss
     @State private var tempAdjustment: String = ""
     @State private var localManualPosition: String = ""
@@ -21,6 +21,13 @@ struct VentDetailView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
+                    Button(action: {
+                        onDelete(vent)
+                        dismiss()
+                    }) {
+//                        Text("Delete Vent").foregroundColor(.red).background(Color.red.opacity(0.2)).padding(.all , 8).padding(.horizontal, 16)
+                        Image(systemName: "trash").foregroundColor(.red).padding(.all , 8).padding(.horizontal, 16)
+                    }
                     VentHeaderView(roomName: vent.room, color: vent.color, ventId: vent.id)
 
                     VentStatusView(

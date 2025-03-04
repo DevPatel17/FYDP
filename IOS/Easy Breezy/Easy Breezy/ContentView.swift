@@ -42,6 +42,10 @@ struct ContentView: View {
                 connection.cancel()
             })
     }
+    
+    func removeVent(_ vent: Vent) {
+        ventStore.removeVent(id: vent.id)
+    }
 
     var body: some View {
         NavigationView {
@@ -51,7 +55,8 @@ struct ContentView: View {
                         vent: ventStore.binding(for: vent),
                         receivedPktType: $receivedPktType,
                         receivedTemperature: $receivedTemperature,
-                        onSendPacket: sendPacket
+                        onSendPacket: sendPacket,
+                        onDelete: removeVent
                     )
                 }
         }
