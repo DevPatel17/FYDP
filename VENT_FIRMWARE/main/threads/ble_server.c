@@ -14,6 +14,7 @@
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h> // Add this to support PRIu32 format specifier
 #include "GLOBAL_DEFINES.h"
 // #include "motor.c"
 
@@ -36,7 +37,7 @@ float get_latest_avg_temperature();
  * Called when a client disconnects from the server
  */
 void clean_up_ble_and_reset(void) {
-    ESP_LOGI(BLE_TAG, "Cleaning up BLE connection and preparing to reset");
+    printf("[BLE SERVER] ** Cleaning up BLE connection and preparing to reset");
     
     // Reset connection handle
     g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -59,14 +60,20 @@ void clean_up_ble_and_reset(void) {
 
 void send_temperature_update(float temp) {
     // Send temperature packet
-    char temp_message[50];
-    snprintf(temp_message, sizeof(temp_message), "ID: %d, temp: %.1f", VentID, temp);
-    om = ble_hs_mbuf_from_flat(temp_message, strlen(temp_message));
-    if (om == NULL) {
-        printf("Failed to allocate buffer for temperature notification\n");
+
+    if (g_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        char temp_message[50];
+        snprintf(temp_message, sizeof(temp_message), "ID: %d, temp: %.1f", VentID, temp);
+        om = ble_hs_mbuf_from_flat(temp_message, strlen(temp_message));
+        if (om == NULL) {
+            printf("Failed to allocate buffer for temperature notification\n");
+        }
+        rc = ble_gatts_notify_custom(g_conn_handle, your_read_attr_handle, om);
+        printf("Sending notification: %s (result: %d)\n", temp_message, rc);
     }
-    rc = ble_gatts_notify_custom(g_conn_handle, your_read_attr_handle, om);
-    printf("Sending notification: %s (result: %d)\n", temp_message, rc);
+    else {
+        ESP_LOGE("GAP", "No conn handle, recv temp: %f \n", temp);
+    }
 }
 
 // Write data to ESP32 defined as server
@@ -154,6 +161,7 @@ static int ble_svc_gatt_handler(uint16_t conn_handle, uint16_t attr_handle,
 }
 
 // BLE event handling
+// BLE event handling
 static int ble_gap_event(struct ble_gap_event *event, void *arg)
 {
     switch (event->type)
@@ -164,8 +172,11 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
         if (event->subscribe.attr_handle == your_read_attr_handle) {
             printf("Notifications %s\n", event->subscribe.cur_notify ? "enabled" : "disabled");
 
-            // clean up ble and get ready to retransmitt
-            if (event->subscribe.cur_notify == 0) clean_up_ble_and_reset();
+            // When notifications are disabled, clean up and reset
+            if (event->subscribe.cur_notify == 0) {
+                ESP_LOGI("GAP", "Notifications disabled, restarting advertising");
+                clean_up_ble_and_reset();
+            }
         }
         break;
     // Advertise if connected
@@ -174,17 +185,20 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
         if (event->connect.status != 0)
         {
             ble_app_advertise();
+        } else {
+            // Store the connection handle when connected successfully
+            g_conn_handle = event->connect.conn_handle;
         }
         break;
     // Advertise again after completion of the event
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        ESP_LOGI("GAP", "BLE GAP EVENT");
+        ESP_LOGI("GAP", "BLE GAP EVENT ADV COMPLETE");
         ble_app_advertise();
         break;
     // Handle disconnection event
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(BLE_TAG, "BLE GAP EVENT DISCONNECT (reason: %d)", event->disconnect.reason);
-        // Call clean-up function
+        // Call clean-up function and restart advertising
         clean_up_ble_and_reset();
         break;
     default:
@@ -229,13 +243,12 @@ void host_task(void *param)
 
 void ble_server_task_entry()
 {
-
     ESP_LOGI(BLE_TAG, "BLE server task started.");
 
     nvs_flash_init();                          // 1 - Initialize NVS flash using
     esp_nimble_hci_init();                     // 2 - Initialize ESP controller
     nimble_port_init();                        // 3 - Initialize the host stack
-    ble_svc_gap_device_name_set(VENT_NAME); // 4 - Initialize NimBLE configuration - server name
+    ble_svc_gap_device_name_set("BLE-Server2"); // 4 - Initialize NimBLE configuration - server name
     ble_svc_gap_init();                        // 4 - Initialize NimBLE configuration - gap service
     ble_svc_gatt_init();                       // 4 - Initialize NimBLE configuration - gatt service
     ble_gatts_count_cfg(gatt_svcs);            // 4 - Initialize NimBLE configuration - config gatt services
@@ -243,20 +256,62 @@ void ble_server_task_entry()
     ble_hs_cfg.sync_cb = ble_app_on_sync;      // 5 - Initialize application
     nimble_port_freertos_init(host_task);      // 6 - Run the thread
 
+    // Reset connection handle to invalid value initially
+    g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
+    // Wait for read attribute handle to be set (happens during connection)
     while(1){
-        if (your_read_attr_handle == 0) vTaskDelay(1000);
-        else {
+        if (your_read_attr_handle == 0) {
+            ESP_LOGI(BLE_TAG, "Waiting for BLE connection setup...");
+            vTaskDelay(1000);
+        } else {
+            ESP_LOGI(BLE_TAG, "BLE connection setup complete.");
             break;
         }
     }
 
+    // Main task loop
+    uint32_t notification_error_count = 0;
+    uint32_t reconnect_attempts = 0;
+    const uint32_t MAX_ERRORS = 5;
+
     while (1) {
-        ESP_LOGI(BLE_TAG, "BLE connected to device. Starting to transmit temperature...");
-        
-        send_temperature_update(get_latest_avg_temperature());
-
+        // Check if we have a valid connection
+        if (g_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+            ESP_LOGI(BLE_TAG, "BLE connected to device. Starting to transmit temperature...");
+            
+            // Get temperature and attempt to send
+            float current_temp = get_latest_avg_temperature();
+            send_temperature_update(current_temp);
+            
+            // Check if there was an error (rc will be non-zero)
+            if (rc != 0) {
+                notification_error_count++;
+                ESP_LOGW(BLE_TAG, "Temperature notification error, count: %" PRIu32 "/%" PRIu32, 
+                         notification_error_count, MAX_ERRORS);
+                
+                // If we've had several consecutive errors, force a reconnection
+                if (notification_error_count >= MAX_ERRORS) {
+                    ESP_LOGE(BLE_TAG, "Too many notification errors, resetting connection");
+                    clean_up_ble_and_reset();
+                    notification_error_count = 0;
+                }
+            } else {
+                // Reset error count on successful notification
+                notification_error_count = 0;
+            }
+        } else {
+            ESP_LOGW(BLE_TAG, "Waiting for BLE connection... Attempt: %" PRIu32, reconnect_attempts);
+            
+            // If we're not connected for a while, try to restart advertising
+            reconnect_attempts++;
+            if (reconnect_attempts >= 5) {
+                ESP_LOGI(BLE_TAG, "Re-initiating BLE advertising");
+                ble_app_advertise();
+                reconnect_attempts = 0;
+            }
+        }
+    
         vTaskDelay(500);
-
     }
 }

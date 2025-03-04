@@ -6,6 +6,8 @@ import threading
 import asyncio
 from bleak import BleakScanner, BleakClient
 import logging
+from collections import deque
+import sys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -21,9 +23,8 @@ HYSTERESIS_THRESHOLD_LOW = 0.5   # Degrees below desired temperature to open ven
 HYSTERESIS_MIN_POSITION = 0      # Minimum vent position (closed)
 HYSTERESIS_MAX_POSITION = 100    # Maximum vent position (open)
 
-# The device name we're looking for (same as in your ESP32 code)
-DEVICE_NAME1 = "BLE-Server"
-DEVICE_NAME2 = "BLE-Server-2"
+# The device names we're looking for (same as in your ESP32 code)
+DEVICE_NAMES = ["BLE-Server1", "BLE-Server2"]
 
 # The UUIDs from your ESP32 code
 READ_UUID = "00000180-0000-1000-8000-00805f9b34fb"    # Service UUID
@@ -33,33 +34,131 @@ READ_CHAR_UUID = "0000fef4-0000-1000-8000-00805f9b34fb"  # Read characteristic U
 # Create a global event loop to be shared across threads
 loop = asyncio.new_event_loop()
 
-async def find_device(device_name):
-    """Scan for the ESP32 device"""
+# Connection tracking
+connected_devices = {}
+pending_connections = set()
+
+async def find_device(device_name, timeout=30):
+    """Scan for the ESP32 device with timeout"""
     logger.info(f"Scanning for {device_name}...")
     
-    while True:
+    start_time = time.time()
+    while time.time() - start_time < timeout:
         devices = await BleakScanner.discover()
         for device in devices:
-            if device.name == device_name:
+            # Check device name and also that we're not already trying to connect to it
+            if device.name == device_name and device.address not in pending_connections:
                 logger.info(f"Found {device.name}: {device.address}")
                 return device
-        logger.info("Device not found, scanning again...")
-        await asyncio.sleep(1)
+        logger.info(f"Device {device_name} not found, scanning again...")
+        await asyncio.sleep(2)
+    
+    logger.error(f"Timeout: Could not find device {device_name} within {timeout} seconds")
+    return None
 
-async def connect_to_ble_client(device_name):
+async def connect_to_ble_client(device_name, retries=3, vent_id=None):
     """
     Connects to the BLE device and returns the client object
-    without setting up notifications or sending messages
+    with retry mechanism
+    
+    Args:
+        device_name (str): The name of the BLE device to connect to
+        retries (int): Number of connection retries
+        vent_id (int, optional): The vent ID if this is a reconnection attempt
+        
+    Returns:
+        tuple: (client, device) - The BLE client and device objects if successful, (None, None) otherwise
     """
-    try:
-        device = await find_device(device_name)
-        client = BleakClient(device.address)
-        await client.connect()
-        logger.info(f"Connected to {device.name}")
-        return client, device
-    except Exception as e:
-        logger.error(f"Error connecting to BLE device: {str(e)}")
-        return None, None
+    device = None
+    client = None
+    
+    # Log differently based on whether this is a new connection or reconnection
+    if vent_id:
+        logger.info(f"Attempting to reconnect to vent {vent_id} with device name {device_name}")
+    else:
+        logger.info(f"Attempting to connect to new device {device_name}")
+    
+    for attempt in range(retries):
+        try:
+            # Mark this device as pending connection
+            if device:
+                pending_connections.add(device.address)
+                
+            device = await find_device(device_name)
+            if not device:
+                logger.error(f"Device {device_name} not found after scanning")
+                if attempt < retries - 1:
+                    logger.info(f"Retrying scan for {device_name}... (Attempt {attempt+2}/{retries})")
+                    await asyncio.sleep(2)
+                continue
+            
+            # Create a disconnection callback that captures the vent_id for reconnection
+            def disconnection_callback(client):
+                nonlocal vent_id
+                logger.warning(f"Device {client.address} was disconnected!")
+                
+                # If we have a vent_id, mark it for reconnection
+                if vent_id is not None:
+                    vent = vent_system.get_vent_cover(vent_id)
+                    if vent:
+                        # Ensure bleName is kept
+                        logger.info(f"Marking vent {vent_id} as disconnected, bleName={vent.bleName}")
+                        vent.disconnect()  # This will set last_disconnect_time
+                
+            # Use connection options for better stability
+            client = BleakClient(
+                device.address,
+                timeout=20.0,  # Increase connection timeout
+                disconnected_callback=disconnection_callback
+            )
+            
+            logger.info(f"Attempting to connect to {device_name} at {device.address}...")
+            connected = await client.connect()
+            
+            if connected:
+                logger.info(f"Successfully connected to {device_name}")
+                # Add to connected devices
+                connected_devices[device.address] = client
+                
+                # Update the vent with the device name for future reconnections
+                if vent_id is not None:
+                    vent = vent_system.get_vent_cover(vent_id)
+                    if vent:
+                        vent.bleName = device_name
+                        vent.reconnect_attempts = 0  # Reset reconnection attempts
+                
+                return client, device
+            else:
+                logger.error(f"Connection failed to {device_name}")
+                if attempt < retries - 1:
+                    logger.info(f"Retrying connection to {device_name}... (Attempt {attempt+2}/{retries})")
+                await asyncio.sleep(2)
+                
+        except Exception as e:
+            logger.error(f"Error connecting to {device_name}: {str(e)}")
+            if attempt < retries - 1:
+                logger.info(f"Retrying after error... (Attempt {attempt+2}/{retries})")
+            # Clean up the failed client
+            if client and client.is_connected:
+                try:
+                    await client.disconnect()
+                except:
+                    pass
+            await asyncio.sleep(2)
+        finally:
+            # Remove from pending if it was added
+            if device and device.address in pending_connections:
+                pending_connections.remove(device.address)
+    
+    # If this was a reconnection attempt, increment the counter
+    if vent_id is not None:
+        vent = vent_system.get_vent_cover(vent_id)
+        if vent:
+            vent.reconnect_attempts += 1
+            logger.warning(f"Failed reconnection attempt {vent.reconnect_attempts}/{vent.max_reconnect_attempts} for vent {vent_id}")
+    
+    logger.error(f"Failed to connect to {device_name} after {retries} attempts")
+    return None, None
 
 async def run_ble_connection(client, VentID, phone_connection):
     """
@@ -72,86 +171,110 @@ async def run_ble_connection(client, VentID, phone_connection):
     try:
         # Define notification callback
         def notification_handler(sender, data):
-            message = data.decode()
-            logger.info(f"Received notification: {message}")
-            
-            if message == "Connected":
-                phone_connection.send_packet(1, str(VentID)) # Send packet to phone to let it know the vent is connected
-            else:
-                try:
-                    # Parse message in format "ID: X, temp: Y"
-                    if "ID:" in message and "temp:" in message:
-                        # Split message into parts and extract values
-                        parts = message.split(',')
-                        vent_id = int(parts[0].split(':')[1].strip())
-                        temp = float(parts[1].split(':')[1].strip())
-                        
-                        logger.info(f"Parsed - Vent ID: {vent_id}, Temperature: {temp}")
-                        
-                        # Send type 2 packet with combined vent ID and temperature
-                        value_str = f"{vent_id}.{temp}"
-                        phone_connection.send_packet(2, value_str) 
-                        
-                        # Get the vent instance
-                        vent = vent_system.get_vent_cover(vent_id)
-                        
-                        if float(temp) < float(vent.temperature) + 0.1 and float(temp) > float(vent.temperature) - 0.1:
-                            temp_change = False
-                        else:
-                            temp_change = True
-                        
-                        if(vent.user_forced == True and temp_change == True):
-                            # Choose temperature control method based on global configuration
-                            if TEMPERATURE_CONTROL_METHOD == 'PID':
-                                # Use existing PID controller
-                                new_pos = int(vent.PIDController.compute(temp, vent.desired_temp))
-                                logger.info(f"PID Controller - New vent position: {new_pos}")
-                                send_vent_position(vent, str(new_pos))
-                            elif TEMPERATURE_CONTROL_METHOD == 'HYSTERESIS':
-                                # Use hysteresis controller
-                                new_pos = compute_hysteresis_position(temp, vent.desired_temp, vent.vent_cover_status)
-                                if new_pos != vent.pos:
-                                    send_vent_position(vent, str(new_pos))
-                                    vent.pos = new_pos
-                                    logger.info(f"Hysteresis Controller - New vent position: {new_pos}")
-                        vent.temperature = temp
-                    elif "ID:" in message and "motor:" in message:
-                        parts = message.split(',')
-                        vent_id = int(parts[0].split(':')[1].strip())
-                        motor_pos = float(parts[1].split(':')[1].strip())
-                        
-                        logger.info(f"Parsed - Vent ID: {vent_id}, Motor position: {motor_pos}")
-                        
-                        # Send type 3 packet with combined vent ID and motor position
-                        value_str = f"{vent_id}.motor{motor_pos}"
-                        phone_connection.send_packet(3, value_str) 
-                        vent.user_forced == False
-                        
-                                        
-                except Exception as e:
-                    logger.error(f"Error parsing message: {e}")
+            try:
+                message = data.decode()
+                logger.info(f"Received notification from {sender}: {message}")
+                
+                if message == "Connected":
+                    phone_connection.send_packet(1, str(VentID)) # Send packet to phone to let it know the vent is connected
+                else:
+                    try:
+                        # Parse message in format "ID: X, temp: Y"
+                        if "ID:" in message and "temp:" in message:
+                            # Split message into parts and extract values
+                            parts = message.split(',')
+                            vent_id = int(parts[0].split(':')[1].strip())
+                            temp = float(parts[1].split(':')[1].strip())
+                            
+                            logger.info(f"Parsed - Vent ID: {vent_id}, Temperature: {temp}")
+                            
+                            # Send type 2 packet with combined vent ID and temperature
+                            value_str = f"{vent_id}.{temp}"
+                            phone_connection.send_packet(2, value_str) 
+                            
+                            # Get the vent instance
+                            vent = vent_system.get_vent_cover(vent_id)
+                            if not vent:
+                                logger.error(f"Could not find vent with ID: {vent_id}")
+                                return
+                                
+                            temp_change = abs(float(temp) - vent.temperature) > 0.1
+                            
+                            if vent.user_forced == True and temp_change == True:
+                                # Choose temperature control method based on global configuration
+                                if TEMPERATURE_CONTROL_METHOD == 'PID':
+                                    # Use existing PID controller
+                                    new_pos = int(vent.PIDController.compute(temp, vent.desired_temp))
+                                    logger.info(f"PID Controller - New vent position: {new_pos}")
+                                    send_vent_position(vent, new_pos)
+                                elif TEMPERATURE_CONTROL_METHOD == 'HYSTERESIS':
+                                    # Use hysteresis controller
+                                    new_pos = compute_hysteresis_position(temp, vent.desired_temp, vent.vent_cover_status)
+                                    if new_pos != vent.pos:
+                                        send_vent_position(vent, new_pos)
+                                        vent.pos = new_pos
+                                        logger.info(f"Hysteresis Controller - New vent position: {new_pos}")
+                            vent.temperature = temp
+                        elif "ID:" in message and "motor:" in message:
+                            parts = message.split(',')
+                            vent_id = int(parts[0].split(':')[1].strip())
+                            motor_pos = float(parts[1].split(':')[1].strip())
+                            
+                            logger.info(f"Parsed - Vent ID: {vent_id}, Motor position: {motor_pos}")
+                            
+                            # Send type 3 packet with combined vent ID and motor position
+                            value_str = f"{vent_id}.motor{motor_pos}"
+                            phone_connection.send_packet(3, value_str) 
+                            
+                            vent = vent_system.get_vent_cover(vent_id)
+                            if vent:
+                                vent.user_forced = False
+                    except Exception as e:
+                        logger.error(f"Error parsing message: {e}")
+            except Exception as e:
+                logger.error(f"Error in notification handler: {e}")
 
         # Enable notifications for the characteristic
-        await client.start_notify(READ_CHAR_UUID, notification_handler)
-        logger.info("Notifications enabled")
+        try:
+            await client.start_notify(READ_CHAR_UUID, notification_handler)
+            logger.info("Notifications enabled successfully")
 
-        # Write initial connection message
-        message = f"Connected, Vent ID: {VentID}".encode()
-        await client.write_gatt_char(WRITE_UUID, message)
-        logger.info(f"Sent message: {message.decode()}")
-        
-        # Keep the connection alive
-        while True:
-            await asyncio.sleep(1)
+            # Write initial connection message
+            message = f"Connected, Vent ID: {VentID}".encode()
+            await client.write_gatt_char(WRITE_UUID, message)
+            logger.info(f"Sent message: {message.decode()}")
+            
+            # Keep the connection alive with a heartbeat
+            while True:
+                # Regularly check if still connected
+                if not client.is_connected:
+                    logger.warning(f"BLE client disconnected for Vent ID: {VentID}")
+                    break
+                    
+                await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"Error during BLE operation: {e}")
+            raise
 
     except Exception as e:
         logger.error(f"Error in BLE connection: {str(e)}")
     finally:
         try:
-            print("************************ run_ble_conn: FAILURE -> tried calling client.disconnect().")
-            # await client.disconnect()
-        except:
-            pass
+            if client and client.is_connected:
+                logger.info(f"Disconnecting client for Vent ID: {VentID}")
+                await client.disconnect()
+        except Exception as e:
+            logger.error(f"Error disconnecting: {e}")
+        
+        # Update vent to show disconnected status
+        vent = vent_system.get_vent_cover(VentID)
+        if vent:
+            vent.disconnect()
+            
+        # Remove from connected devices
+        address = next((addr for addr, c in connected_devices.items() if c == client), None)
+        if address:
+            connected_devices.pop(address, None)
 
 def compute_hysteresis_position(current_temp, desired_temp, current_position):
     """
@@ -168,13 +291,40 @@ def compute_hysteresis_position(current_temp, desired_temp, current_position):
     # For cooling mode: open vent when too warm, close when cool enough
     if current_temp > (desired_temp + HYSTERESIS_THRESHOLD_HIGH):
         # Temperature is too high, open vent to allow cooling
-        return HYSTERESIS_MIN_POSITION
+        return HYSTERESIS_MAX_POSITION
     elif current_temp < (desired_temp - HYSTERESIS_THRESHOLD_LOW):
         # Temperature is below target, close vent to reduce cooling
-        return HYSTERESIS_MAX_POSITION
+        return HYSTERESIS_MIN_POSITION
     else:
         # Within acceptable range, maintain current position
         return current_position
+
+async def ble_connection_wrapper(client, VentID, phone_connection):
+    """
+    Async wrapper function to handle BLE connection with error handling and retry
+    """
+    retry_count = 0
+    max_retries = 3
+    
+    while retry_count < max_retries:
+        try:
+            await run_ble_connection(client, VentID, phone_connection)
+            break  # If run_ble_connection completes normally, exit the loop
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"BLE connection error (attempt {retry_count}/{max_retries}): {str(e)}")
+            
+            if retry_count < max_retries:
+                logger.info(f"Retrying BLE connection in 5 seconds...")
+                await asyncio.sleep(5)
+            else:
+                logger.error(f"Maximum retry attempts reached. Giving up.")
+                
+                # Update vent to show disconnected status
+                vent = vent_system.get_vent_cover(VentID)
+                if vent:
+                    vent.disconnect()
+                break
 
 def ble_connection_thread(client, VentID, phone_connection):
     """
@@ -186,7 +336,7 @@ def ble_connection_thread(client, VentID, phone_connection):
     
     # Submit the task to the event loop
     future = asyncio.run_coroutine_threadsafe(
-        run_ble_connection(client, VentID, phone_connection), 
+        ble_connection_wrapper(client, VentID, phone_connection), 
         loop
     )
     
@@ -296,7 +446,7 @@ class VentCover:
     # Class variable to keep track of the next available ventID
     next_vent_id = 1
     
-    def __init__(self, temperature=0.0, vent_cover_status=0, user_forced=False, vent_id=None):
+    def __init__(self, temperature=0.0, vent_cover_status=0, user_forced=False, vent_id=None, bleName=None):
         self.temperature = float(temperature)
         self.desired_temp = float(temperature)
         self.vent_cover_status = int(vent_cover_status)
@@ -305,6 +455,13 @@ class VentCover:
         self.ble_thread = None
         self.PIDController = VentPIDController()
         self.pos = -1
+        self.last_command_time = 0  # Track when commands were sent
+        self.command_queue = deque(maxlen=5)  # Queue for commands
+        self.bleName = bleName  # Store the BLE device name for reconnection
+        self.last_disconnect_time = 0  # Track when disconnection happened
+        self.reconnect_attempts = 0  # Track number of reconnection attempts
+        self.max_reconnect_attempts = 5  # Maximum number of reconnection attempts
+        
         # If no vent_id provided, assign the next available one
         if vent_id is None:
             self.vent_id = VentCover.next_vent_id
@@ -326,11 +483,23 @@ class VentCover:
     
     def is_connected(self):
         """Check if the vent has an active BLE connection"""
-        return self.ble_connection is not None
+        return self.ble_connection is not None and self.ble_connection.is_connected
+    
+    def queue_command(self, command):
+        """Add a command to the queue with rate limiting"""
+        self.command_queue.append(command)
+        
+    def get_next_command(self):
+        """Get the next command from the queue if available"""
+        if self.command_queue:
+            return self.command_queue.popleft()
+        return None
     
     def disconnect(self):
-        """Remove the BLE connection"""
+        """Handle disconnection of BLE connection"""
         self.ble_connection = None
+        self.last_disconnect_time = time.time()
+        logger.info(f"Vent {self.vent_id} disconnected, will attempt reconnection if bleName is available")
     
     def __str__(self):
         connected_status = "Connected" if self.is_connected() else "Not Connected"
@@ -339,58 +508,84 @@ class VentCover:
 class VentCoverSystem:
     def __init__(self):
         self.vent_covers = []
+        self._lock = threading.RLock()  # Add lock for thread safety
     
     def add_vent_cover(self, temperature=0.0, vent_cover_status=0, user_forced=False):
         """Create and add a new vent cover to the system"""
-        new_vent = VentCover(temperature, vent_cover_status, user_forced)
-        self.vent_covers.append(new_vent)
-        return new_vent.vent_id
+        with self._lock:
+            new_vent = VentCover(temperature, vent_cover_status, user_forced)
+            self.vent_covers.append(new_vent)
+            return new_vent.vent_id
     
     def remove_vent_cover(self, vent_id):
         """Remove a vent cover by its ID"""
-        self.vent_covers = [vent for vent in self.vent_covers if vent.vent_id != vent_id]
+        with self._lock:
+            self.vent_covers = [vent for vent in self.vent_covers if vent.vent_id != vent_id]
     
     def get_vent_cover(self, vent_id):
         """Get a vent cover by its ID"""
-        for vent in self.vent_covers:
-            if vent.vent_id == vent_id:
-                return vent
-        return None
+        with self._lock:
+            for vent in self.vent_covers:
+                if vent.vent_id == vent_id:
+                    return vent
+            return None
     
     def get_all_vent_covers(self):
         """Return all vent covers"""
-        return self.vent_covers
+        with self._lock:
+            return self.vent_covers.copy()
     
     def update_vent_cover(self, vent_id, temperature=None, vent_cover_status=None, user_forced=None):
         """Update a vent cover's properties"""
-        vent = self.get_vent_cover(vent_id)
-        if vent:
-            if temperature is not None:
-                vent.temperature = float(temperature)
-            if vent_cover_status is not None:
-                vent.vent_cover_status = int(vent_cover_status)
-            if user_forced is not None:
-                vent.user_forced = bool(user_forced)
-            return True
-        return False
+        with self._lock:
+            vent = self.get_vent_cover(vent_id)
+            if vent:
+                if temperature is not None:
+                    vent.temperature = float(temperature)
+                if vent_cover_status is not None:
+                    vent.vent_cover_status = int(vent_cover_status)
+                if user_forced is not None:
+                    vent.user_forced = bool(user_forced)
+                return True
+            return False
     
     def __str__(self):
-        return "\n".join(str(vent) for vent in self.vent_covers)
+        with self._lock:
+            return "\n".join(str(vent) for vent in self.vent_covers)
 
 
 vent_system = VentCoverSystem()
 
 def send_vent_position(vent, position):
-    """Send a position command to a vent over BLE"""
+    """Send a position command to a vent over BLE with rate limiting"""
     if not vent.is_connected():
-        print(f"Cannot send position to vent {vent.vent_id}: not connected")
+        logger.warning(f"Cannot send position to vent {vent.vent_id}: not connected")
         return
+    
+    # Rate limit commands
+    current_time = time.time()
+    if current_time - vent.last_command_time < 0.5:  # Minimum 500ms between commands
+        # Queue the command instead
+        vent.queue_command(str(position))
+        logger.debug(f"Rate limited command to vent {vent.vent_id}, queued position: {position}")
+        return
+        
+    vent.last_command_time = current_time
         
     # Create a future to execute the async BLE write operation
     async def send_position_command(client, position):
         try:
+            # Make sure position is a string
+            pos_str = str(position)
+            
             # Encode the position command
-            message = position.encode()
+            message = pos_str.encode()
+            
+            # Verify client is still connected
+            if not client.is_connected:
+                logger.error(f"Client for vent {vent.vent_id} is no longer connected")
+                return False
+                
             await client.write_gatt_char(WRITE_UUID, message)
             logger.info(f"Sent position command to vent {vent.vent_id}: {position}")
             return True
@@ -406,13 +601,33 @@ def send_vent_position(vent, position):
     
     try:
         # Wait for the operation to complete with a timeout
-        result = future.result(timeout=5.0)
+        result = future.result(timeout=3.0)
         if result:
-            print(f"Successfully sent position {position} to vent {vent.vent_id}")
+            logger.info(f"Successfully sent position {position} to vent {vent.vent_id}")
         else:
-            print(f"Failed to send position to vent {vent.vent_id}")
+            logger.warning(f"Failed to send position to vent {vent.vent_id}")
     except Exception as e:
-        print(f"Error in send_vent_position: {str(e)}")
+        logger.error(f"Error in send_vent_position: {str(e)}")
+
+# Command processor thread to handle queued commands
+def command_processor_thread():
+    """Process queued commands with rate limiting"""
+    while True:
+        try:
+            # Check all vents for queued commands
+            for vent in vent_system.get_all_vent_covers():
+                if vent.is_connected():
+                    # Get next command if available and not rate limited
+                    command = vent.get_next_command()
+                    if command and time.time() - vent.last_command_time >= 0.5:
+                        send_vent_position(vent, command)
+                        vent.last_command_time = time.time()
+                        
+            # Sleep a bit to prevent CPU hogging
+            time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Error in command processor: {e}")
+            time.sleep(1)  # Longer sleep on error
 
 class VentCommunicator:
     def __init__(self):
@@ -429,11 +644,15 @@ class VentCommunicator:
         
         # Flag for stopping the threads
         self.running = True
+        
+        # Command processor thread
+        self.cmd_processor = threading.Thread(target=command_processor_thread, daemon=True)
+        self.cmd_processor.start()
     
     def send_packet(self, pkt_type, value):
         """Send a packet to the phone"""
         if self.phone_address is None:
-            print("No phone address known yet")
+            logger.warning("No phone address known yet")
             return
             
         # Pack the packet type as a 32-bit integer
@@ -450,9 +669,9 @@ class VentCommunicator:
             # Send to port 3001 (matches iOS app's listening port)
             send_address = (self.phone_address[0], 3001)
             self.send_socket.sendto(packet, send_address)
-            print(f'Sent packet - Type: {pkt_type}, Value: {value}')
+            logger.info(f'Sent packet - Type: {pkt_type}, Value: {value}')
         except Exception as e:
-            print(f'Error sending packet: {e}')
+            logger.error(f'Error sending packet: {e}')
 
     def receive_packets(self):
         while self.running:
@@ -462,8 +681,13 @@ class VentCommunicator:
                 # Store the phone's address for sending responses
                 self.phone_address = address
                 
-                # if len(data) >= 8:
+                # Extract packet type and value
+                if len(data) < 4:
+                    logger.warning(f"Received packet too short: {len(data)} bytes")
+                    continue
+                    
                 pkt_type = struct.unpack('<I', data[0:4])[0]
+                
                 # Extract the string value after the packet type
                 value_str = ""
                 if len(data) > 4:
@@ -471,38 +695,41 @@ class VentCommunicator:
                         # Try to decode the remaining bytes as a UTF-8 string
                         value_str = data[4:].decode('utf-8')
                     except Exception as e:
-                        print(f"Error decoding string value: {e}")
+                        logger.error(f"Error decoding string value: {e}")
                 
-                print(f'Received from {address}:')
-                print(f'  Type: {pkt_type}')
-                print(f'  Value: {value_str}')
+                logger.info(f'Received from {address}:')
+                logger.info(f'  Type: {pkt_type}')
+                logger.info(f'  Value: {value_str}')
                 
                 if pkt_type == 3:  # Vent position control request
                     try:
-                        # Convert float value to string and parse as "VentID.VentPosition"
-                        # value_str = str(value)
+                        # Handle vent position control
                         if '.' in value_str:
                             parts = value_str.split('.')
                             vent_id = int(parts[0])
                             vent_position = parts[1]
                             
-                            print(f"Vent control request - Vent ID: {vent_id}, Position: {vent_position}")
+                            logger.info(f"Vent control request - Vent ID: {vent_id}, Position: {vent_position}")
                             
                             # Get the vent cover and check if it has a BLE connection
                             vent = vent_system.get_vent_cover(vent_id)
-                            vent.user_forced = False
-                            if vent and vent.is_connected():
-                                # Send vent position command to the vent via BLE
-                                send_vent_position(vent, vent_position)
+                            
+                            if vent:
+                                vent.user_forced = False
+                                if vent.is_connected():
+                                    # Send vent position command to the vent via BLE
+                                    send_vent_position(vent, vent_position)
+                                else:
+                                    logger.warning(f"Vent {vent_id} is not connected")
                             else:
-                                print(f"Error: Vent {vent_id} not found or not connected")
+                                logger.error(f"Error: Vent {vent_id} not found")
                         else:
-                            print(f"Error: Invalid value format for type 3 packet: {value_str}")
+                            logger.error(f"Error: Invalid value format for type 3 packet: {value_str}")
                     except Exception as e:
-                        print(f"Error processing vent position packet: {e}")
+                        logger.error(f"Error processing vent position packet: {e}")
                 
                 elif pkt_type == 1:  # New vent setup request
-                    print("Received vent setup request, starting setup...")
+                    logger.info("Received vent setup request, starting setup...")
                     
                     # Setup a new vent cover and store its VentID
                     VentID = vent_system.add_vent_cover()
@@ -510,49 +737,63 @@ class VentCommunicator:
                     try:
                         # Connect to BLE client using the async loop
                         future = asyncio.run_coroutine_threadsafe(connect_to_ble_client(value_str), loop)
-                        client, device = future.result()  # Wait for connection
-                        
-                        if client:
-                            # Store BLE connection
-                            vent_system.get_vent_cover(VentID).set_ble_connection(client)
+                        try:
+                            client, device = future.result(timeout=30)  # Wait for connection with timeout
                             
-                            # Start a thread to handle notifications and messages
-                            ble_thread = threading.Thread(
-                                target=ble_connection_thread, 
-                                args=(client, VentID, self)
-                            )
-                            vent_system.get_vent_cover(VentID).set_ble_thread(ble_thread)
-                            ble_thread.start()
+                            if client:
+                                # Store BLE connection
+                                vent = vent_system.get_vent_cover(VentID)
+                                if vent:
+                                    vent.set_ble_connection(client)
+                                    vent.bleName = value_str 
+                                    # Start a thread to handle notifications and messages
+                                    ble_thread = threading.Thread(
+                                        target=ble_connection_thread, 
+                                        args=(client, VentID, self),
+                                        daemon=True
+                                    )
+                                    vent.set_ble_thread(ble_thread)
+                                    ble_thread.start()
+                                else:
+                                    logger.error(f"Could not find vent with ID {VentID}")
+                            else:
+                                logger.error("Failed to connect to BLE device")
+                        except concurrent.futures.TimeoutError:
+                            logger.error("Connection attempt timed out")
                         
                     except KeyboardInterrupt:
                         logger.info("Script terminated by user")
                     except Exception as e:
-                        logger.error(f"Unexpected error: {str(e)}")
+                        logger.error(f"Unexpected error during vent setup: {str(e)}")
                 
-                elif pkt_type == 2:
-                    print("Received temperature mode request...")
+                elif pkt_type == 2:  # Temperature mode request
+                    logger.info("Received temperature mode request...")
                     
-                    if '.' in value_str:
-                        parts = value_str.split('.')
-                        vent_id = int(parts[0])
-                        temperature = parts[1]
-                    
-                    vent = vent_system.get_vent_cover(vent_id)
+                    try:
+                        if '.' in value_str:
+                            parts = value_str.split('.')
+                            vent_id = int(parts[0])
+                            temperature = parts[1]
+                        
+                            vent = vent_system.get_vent_cover(vent_id)
 
-                    if vent is not None: 
-                        vent.user_forced = True
-                        vent.desired_temp = float(temperature)
-                    else:
-                        print("*************** receive_packet(): VENT RET AS NONE")
-                    
-                    
+                            if vent is not None: 
+                                vent.user_forced = True
+                                vent.desired_temp = float(temperature)
+                                logger.info(f"Set desired temperature for vent {vent_id} to {temperature}")
+                            else:
+                                logger.error(f"Could not find vent with ID {vent_id}")
+                        else:
+                            logger.error(f"Invalid temperature mode request format: {value_str}")
+                    except Exception as e:
+                        logger.error(f"Error processing temperature mode request: {e}")
                         
             except socket.timeout:
                 # This is normal, just continue the loop
                 continue
             except Exception as e:
                 if self.running:  # Only print errors if we're still meant to be running
-                    print(f'Error receiving packet: {e}')
+                    logger.error(f'Error receiving packet: {e}')
 
     def start(self):
         """Start the communication threads"""
@@ -575,16 +816,99 @@ class VentCommunicator:
         loop_thread.start()
         
         # Start receive thread
-        self.recv_thread = threading.Thread(target=self.receive_packets)
+        self.recv_thread = threading.Thread(target=self.receive_packets, daemon=True)
         self.recv_thread.start()
+        
+        # Connection health monitoring thread
+        monitor_thread = threading.Thread(target=self.monitor_connections, daemon=True)
+        monitor_thread.start()
         
         # Main loop for testing
         try:
             while True:
                 time.sleep(5)  # Sleep for 5 seconds between iterations
+                self.print_status()  # Print status update periodically
         except KeyboardInterrupt:
             print("\nShutting down...")
             self.stop()
+
+    def monitor_connections(self):
+        """Monitor and maintain BLE connections with reconnection attempts"""
+        while self.running:
+            try:
+                # For each vent, check if it's still connected
+                for vent in vent_system.get_all_vent_covers():
+                    # Log the status including the bleName
+                    logger.debug(f"Vent {vent.vent_id}: connected={vent.is_connected()}, bleName={vent.bleName}, attempts={vent.reconnect_attempts}/{vent.max_reconnect_attempts}")
+                    # Check if connection is lost
+                    if vent.ble_connection and not vent.is_connected():
+                        logger.warning(f"Detected disconnected vent {vent.vent_id}, updating status")
+                        vent.disconnect()  # Update internal status
+                    
+                    # Check if we need to attempt reconnection
+                    if not vent.is_connected() and vent.bleName and vent.reconnect_attempts < vent.max_reconnect_attempts:
+                        # Check if enough time has passed since last disconnect or reconnect attempt
+                        time_since_disconnect = time.time() - vent.last_disconnect_time
+                        
+                        # Use exponential backoff for reconnection attempts
+                        # Wait longer between each attempt: 5s, 10s, 20s, 40s, 80s
+                        backoff_time = 5 * (2 ** vent.reconnect_attempts)
+                        
+                        if time_since_disconnect >= backoff_time:
+                            logger.info(f"Attempting to reconnect to vent {vent.vent_id} with name {vent.bleName} (attempt {vent.reconnect_attempts + 1}/{vent.max_reconnect_attempts})")
+                            
+                            # Attempt reconnection
+                            future = asyncio.run_coroutine_threadsafe(
+                                connect_to_ble_client(vent.bleName, retries=1, vent_id=vent.vent_id),
+                                loop
+                            )
+                            
+                            try:
+                                # Wait for connection with timeout
+                                client, device = future.result(timeout=15)
+                                
+                                if client:
+                                    # Update the vent's connection
+                                    vent.set_ble_connection(client)
+                                    
+                                    # Start a new notification thread if needed
+                                    if not vent.ble_thread or not vent.ble_thread.is_alive():
+                                        ble_thread = threading.Thread(
+                                            target=ble_connection_thread, 
+                                            args=(client, vent.vent_id, self),
+                                            daemon=True
+                                        )
+                                        vent.set_ble_thread(ble_thread)
+                                        ble_thread.start()
+                                        
+                                    logger.info(f"Successfully reconnected to vent {vent.vent_id}")
+                                else:
+                                    # Update the last disconnect time to trigger next attempt after backoff
+                                    vent.last_disconnect_time = time.time()
+                                    logger.warning(f"Failed to reconnect to vent {vent.vent_id}")
+                            except concurrent.futures.TimeoutError:
+                                logger.error(f"Reconnection attempt to vent {vent.vent_id} timed out")
+                                vent.last_disconnect_time = time.time()  # Update for backoff
+                            except Exception as e:
+                                logger.error(f"Error during reconnection attempt for vent {vent.vent_id}: {str(e)}")
+                                vent.last_disconnect_time = time.time()  # Update for backoff
+                
+                # Sleep for a bit before checking again
+                time.sleep(5)
+            except Exception as e:
+                logger.error(f"Error in connection monitor: {e}")
+                time.sleep(5)
+
+    def print_status(self):
+        """Print the current status of the system"""
+        logger.info("--- System Status ---")
+        logger.info(f"Connected devices: {len(connected_devices)}")
+        
+        for vent in vent_system.get_all_vent_covers():
+            connection_status = "Connected" if vent.is_connected() else "Disconnected"
+            logger.info(f"Vent {vent.vent_id}: Temp={vent.temperature}°C, Target={vent.desired_temp}°C, {connection_status}")
+        
+        logger.info("-------------------")
 
     def run_event_loop(self):
         """Run the asyncio event loop in a separate thread"""
@@ -595,21 +919,23 @@ class VentCommunicator:
         """Clean shutdown of the communicator"""
         print("Stopping communicator...")
         self.running = False
-            # Properly disconnect all BLE connections
+        
+        # Properly disconnect all BLE connections
         print("Disconnecting BLE devices...")
-        for vent in vent_system.vent_covers:
+        for vent in vent_system.get_all_vent_covers():
             if vent.is_connected():
                 try:
-                # Create a future to execute the async disconnect operation
+                    # Create a future to execute the async disconnect operation
                     future = asyncio.run_coroutine_threadsafe(
-                    vent.get_ble_connection().disconnect(),
-                    loop
+                        vent.get_ble_connection().disconnect(),
+                        loop
                     )
                     # Wait for disconnect with timeout
                     future.result(timeout=3.0)
                     print(f"Disconnected vent {vent.vent_id} BLE connection")
                 except Exception as e:
                     print(f"Error disconnecting vent {vent.vent_id}: {str(e)}")
+        
         # Close the sockets
         try:
             self.recv_socket.close()
@@ -619,22 +945,29 @@ class VentCommunicator:
         
         # Wait for receive thread to finish (with timeout)
         print("Waiting for threads to finish...")
-        self.recv_thread.join(timeout=2.0)  # Wait up to 2 seconds
-        
+        # self.recv_thread.join(timeout=2.0)  # Wait up to 2 seconds
         
         # Clean up BLE threads
-        for vent in vent_system.vent_covers:
-            if vent.ble_thread:
-                vent.ble_thread.join(timeout=2.0)
+        # for vent in vent_system.get_all_vent_covers():
+        #     if vent.ble_thread:
+        #         vent.ble_thread.join(timeout=2.0)
         
         # Stop the event loop
-        loop.call_soon_threadsafe(loop.stop)
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception as e:
+            print(f"Error stopping event loop: {e}")
         
-        if self.recv_thread.is_alive():
-            print("Warning: Thread did not terminate cleanly")
-        else:
-            print("Cleanup completed successfully")
+        print("Cleanup completed.")
+        sys.exit(0)
 
 if __name__ == '__main__':
-    communicator = VentCommunicator()
-    communicator.start()
+    # Import required module here to avoid circular imports
+    import concurrent.futures
+    
+    try:
+        communicator = VentCommunicator()
+        communicator.start()
+    except Exception as e:
+        logger.critical(f"Critical error in main: {e}")
+        sys.exit(1)

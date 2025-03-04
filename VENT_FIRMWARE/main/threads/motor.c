@@ -16,6 +16,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "GLOBAL_DEFINES.h"
 
 static const char *MOTOR_TAG = "Motor";
 
@@ -150,6 +151,11 @@ void set_motor_duty(int duty)
     if (duty < 0 || duty > 4095) {
         printf("Invalid input. Please try again.\n");
     } else {
+        
+        // note: duty cycles have been flipped
+        if (duty == MOTOR_CLOSE_PWM) ESP_LOGI(MOTOR_TAG, "** Closing Vent -> %s", (VENT_COLOR == BROWN_VENT) ? "Brown Vent" : "White Vent");
+        else if (duty == MOTOR_OPEN_PWM) ESP_LOGI(MOTOR_TAG, "** Opening Vent -> %s", (VENT_COLOR == BROWN_VENT) ? "Brown Vent" : "White Vent");
+
         ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
         ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
         ESP_LOGI(MOTOR_TAG, "DUTY: %d", duty);
@@ -161,6 +167,8 @@ void set_motor_position(int precentage_open)
 {
     if (precentage_open > 100) precentage_open = 100;
     if (precentage_open < 0) precentage_open = 0;
+
+    precentage_open = 100 - precentage_open;
             
     int desired_motor_pwm = ((MOTOR_OPEN_PWM-MOTOR_CLOSE_PWM)/100.0f)*precentage_open + MOTOR_CLOSE_PWM;
 

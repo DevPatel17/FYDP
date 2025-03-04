@@ -629,7 +629,7 @@ uint16_t voltageToADC(double voltage, uint16_t adcMaxValue) {
         float temp = ADC_TO_TEMP_LUT[padded_adc];
         insert_temp(&temp_data, temp);
 
-        ESP_LOGI(TEMP_SENSE_TAG, "raw_adc read %lu, padded_adc read %lu, voltage: %.5f, temp: %f", raw_adc, padded_adc, voltage, temp);
+        // ESP_LOGI(TEMP_SENSE_TAG, "raw_adc read %lu, padded_adc read %lu, voltage: %.5f, temp: %f", raw_adc, padded_adc, voltage, temp);
 
     }
  }
